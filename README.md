@@ -52,9 +52,12 @@ Generate one at <https://twitchapps.com/tmi/> — it will look like `oauth:xxxxx
 AI Text Bot/
 ├── twitch_bot.py      # Main application
 ├── requirements.txt
+├── .env               # Saved connection settings (git-ignored, created on first Connect)
 ├── prompts/           # Saved system prompts (created automatically)
 └── README.md
 ```
+
+> **Note:** `.env` is listed in `.gitignore` so your Twitch token and credentials are never committed.
 
 ## Threading model
 

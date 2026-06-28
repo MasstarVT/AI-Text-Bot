@@ -40,6 +40,14 @@ Four independent checkboxes — AI fires if **any** enabled condition is met:
 
 Bits and channel-point data come from IRCv3 tags parsed in `TwitchIRCClient._handle`. Only text-required channel point redemptions appear in IRC; reward IDs are logged to the Console so users can copy them.
 
+## Settings persistence (`.env`)
+
+Connection fields (channel, username, token, LLM endpoint/model, Piper paths) are saved to `.env` next to the script whenever the user clicks **Connect**. On next launch, `_load_env()` parses the file before `_build_ui()` runs so `_build_connection` can pre-fill the entries.
+
+`.env` is in `.gitignore` — credentials are never committed.
+
+`.env` key names: `TWITCH_CHANNEL`, `TWITCH_USERNAME`, `TWITCH_TOKEN`, `LLM_ENDPOINT`, `LLM_MODEL`, `PIPER_EXE`, `PIPER_MODEL`, `PIPER_CONFIG`.
+
 ## Saved prompts
 
 System prompts are saved as `.txt` files in `prompts/` (created next to the script on first run). Save/Load buttons are in the AI Interaction tab.

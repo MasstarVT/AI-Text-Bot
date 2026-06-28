@@ -418,9 +418,15 @@ class TwitchBotApp(ctk.CTk):
         self.geometry("1140x780")
         self.minsize(960, 640)
 
-        # Prompts directory (next to this script)
-        self._prompts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts")
+        # Paths next to this script
+        _here = os.path.dirname(os.path.abspath(__file__))
+        self._prompts_dir = os.path.join(_here, "prompts")
+        self._env_path    = os.path.join(_here, ".env")
         os.makedirs(self._prompts_dir, exist_ok=True)
+
+        # Load persisted connection settings (populated before _build_ui so
+        # _build_connection can use them as field defaults)
+        self._env = self._load_env()
 
         # Runtime toggle state
         self.game_input_enabled = ctk.BooleanVar(value=False)
@@ -509,7 +515,7 @@ class TwitchBotApp(ctk.CTk):
             setattr(self, attr, e)
             r += 1
 
-        def file_field(label: str, attr: str, placeholder: str = "") -> None:
+        def file_field(label: str, attr: str, placeholder: str = "", default: str = "") -> None:
             nonlocal r
             ctk.CTkLabel(tab, text=label, anchor="e").grid(
                 row=r, column=0, sticky="e", padx=(14, 8), pady=5)
@@ -517,6 +523,8 @@ class TwitchBotApp(ctk.CTk):
             fr.grid(row=r, column=1, sticky="ew", padx=(0, 14), pady=5)
             fr.grid_columnconfigure(0, weight=1)
             e = ctk.CTkEntry(fr, placeholder_text=placeholder)
+            if default:
+                e.insert(0, default)
             e.grid(row=0, column=0, sticky="ew")
             ctk.CTkButton(
                 fr, text="Browse", width=74,
@@ -525,26 +533,39 @@ class TwitchBotApp(ctk.CTk):
             setattr(self, attr, e)
             r += 1
 
+        e = self._env  # shorthand
+
         # ── Twitch IRC ────────────────────────────────────────────────────────
         section("Twitch IRC")
-        field("Channel",      "e_channel",  placeholder="channelname")
-        field("Bot Username", "e_username", placeholder="mybotname")
-        field("OAuth Token",  "e_token",    placeholder="oauth:xxxxxxxxxxxxxxxx", secret=True)
+        field("Channel",      "e_channel",
+              default=e.get("TWITCH_CHANNEL", ""),  placeholder="channelname")
+        field("Bot Username", "e_username",
+              default=e.get("TWITCH_USERNAME", ""), placeholder="mybotname")
+        field("OAuth Token",  "e_token",
+              default=e.get("TWITCH_TOKEN", ""),
+              placeholder="oauth:xxxxxxxxxxxxxxxx", secret=True)
 
         # ── Local LLM ─────────────────────────────────────────────────────────
         section("Local LLM  (Ollama / LM Studio)")
         field(
             "API Endpoint", "e_endpoint",
-            default="http://localhost:11434/v1/chat/completions",
+            default=e.get("LLM_ENDPOINT", "http://localhost:11434/v1/chat/completions"),
             placeholder="http://localhost:11434/v1/chat/completions",
         )
-        field("Model Name", "e_model", default="llama3", placeholder="llama3")
+        field("Model Name", "e_model",
+              default=e.get("LLM_MODEL", "llama3"), placeholder="llama3")
 
         # ── Piper TTS ─────────────────────────────────────────────────────────
         section("Piper TTS")
-        file_field("Piper Executable",     "e_piper_exe",    "piper  or  /path/to/piper")
-        file_field("Voice Model  (.onnx)", "e_piper_model",  "/path/to/voice.onnx")
-        file_field("Model Config (.json)", "e_piper_cfg",    "/path/to/voice.onnx.json  (optional)")
+        file_field("Piper Executable",     "e_piper_exe",
+                   placeholder="piper  or  /path/to/piper",
+                   default=e.get("PIPER_EXE", ""))
+        file_field("Voice Model  (.onnx)", "e_piper_model",
+                   placeholder="/path/to/voice.onnx",
+                   default=e.get("PIPER_MODEL", ""))
+        file_field("Model Config (.json)", "e_piper_cfg",
+                   placeholder="/path/to/voice.onnx.json  (optional)",
+                   default=e.get("PIPER_CONFIG", ""))
 
         # ── Action buttons ────────────────────────────────────────────────────
         btn_row = ctk.CTkFrame(tab, fg_color="transparent")
@@ -839,6 +860,7 @@ class TwitchBotApp(ctk.CTk):
     # ══════════════════════════════════════════════════════════════════════════
 
     def _connect(self) -> None:
+        self._save_env()
         self._irc = TwitchIRCClient(
             get_creds=self._get_irc_creds,
             log=self._log,
@@ -999,6 +1021,38 @@ class TwitchBotApp(ctk.CTk):
                 fg_color=_RED[0], hover_color=_RED[1],
                 command=lambda c=cmd: self._remove_mapping(c),
             ).grid(row=0, column=2, padx=12, pady=8)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # .env persistence
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _load_env(self) -> dict[str, str]:
+        env: dict[str, str] = {}
+        if not os.path.exists(self._env_path):
+            return env
+        with open(self._env_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                k, _, v = line.partition("=")
+                env[k.strip()] = v.strip()
+        return env
+
+    def _save_env(self) -> None:
+        lines = [
+            f"TWITCH_CHANNEL={self.e_channel.get().strip()}",
+            f"TWITCH_USERNAME={self.e_username.get().strip()}",
+            f"TWITCH_TOKEN={self.e_token.get().strip()}",
+            f"LLM_ENDPOINT={self.e_endpoint.get().strip()}",
+            f"LLM_MODEL={self.e_model.get().strip()}",
+            f"PIPER_EXE={self.e_piper_exe.get().strip()}",
+            f"PIPER_MODEL={self.e_piper_model.get().strip()}",
+            f"PIPER_CONFIG={self.e_piper_cfg.get().strip()}",
+        ]
+        with open(self._env_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        self._log("[System] Connection settings saved to .env")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Prompt save / load
