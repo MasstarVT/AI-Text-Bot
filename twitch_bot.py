@@ -202,17 +202,39 @@ class TTSEngine:
                 except OSError:
                     pass
 
+    # System audio players tried in order when pygame.mixer is unavailable
+    _SYSTEM_PLAYERS = ("pw-play", "paplay", "aplay", "ffplay", "mpv")
+
     def _play(self, wav_path: str) -> None:
-        if not HAS_PYGAME:
-            self.log("[TTS] pygame unavailable — audio skipped (pip install pygame).")
-            return
-        try:
-            sound   = pygame.mixer.Sound(wav_path)
-            channel = sound.play()
-            while channel and channel.get_busy():
-                time.sleep(0.05)
-        except Exception as exc:
-            self.log(f"[TTS] Playback error: {exc}")
+        if HAS_PYGAME:
+            try:
+                sound   = pygame.mixer.Sound(wav_path)
+                channel = sound.play()
+                while channel and channel.get_busy():
+                    time.sleep(0.05)
+                return
+            except Exception as exc:
+                self.log(f"[TTS] pygame error: {exc}")
+
+        # pygame.mixer unavailable or failed — try system audio players
+        for player in self._SYSTEM_PLAYERS:
+            try:
+                result = subprocess.run(
+                    [player, wav_path],
+                    capture_output=True,
+                    timeout=30,
+                )
+                if result.returncode == 0:
+                    return
+            except FileNotFoundError:
+                continue
+            except subprocess.TimeoutExpired:
+                self.log(f"[TTS] {player} timed out.")
+                return
+            except Exception as exc:
+                self.log(f"[TTS] {player} error: {exc}")
+
+        self.log("[TTS] No working audio player found.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
