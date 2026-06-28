@@ -27,6 +27,19 @@ Single file: `twitch_bot.py`. Four classes plus the app window:
 - `game_input_enabled` and `ai_enabled` are `ctk.BooleanVar`; `.get()` is GIL-safe for reads from any thread.
 - `get_config` / `get_creds` callables are passed to workers so they always read the latest GUI field values without storing stale snapshots.
 
+## AI trigger logic (`_route_ai`)
+
+Four independent checkboxes — AI fires if **any** enabled condition is met:
+
+| Condition | Config |
+|---|---|
+| Every N messages | entry field; counter resets after each trigger |
+| @bot mentions | matches if bot username appears anywhere in the message |
+| Bits cheer ≥ N | parsed from `bits` IRCv3 tag; compared against minimum field |
+| Channel Point redeem | parsed from `custom-reward-id` IRCv3 tag; Reward ID field is optional (blank = any) |
+
+Bits and channel-point data come from IRCv3 tags parsed in `TwitchIRCClient._handle`. Only text-required channel point redemptions appear in IRC; reward IDs are logged to the Console so users can copy them.
+
 ## Saved prompts
 
 System prompts are saved as `.txt` files in `prompts/` (created next to the script on first run). Save/Load buttons are in the AI Interaction tab.

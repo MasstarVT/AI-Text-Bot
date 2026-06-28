@@ -388,11 +388,19 @@ class TwitchIRCClient:
             self._sock.sendall(b"PONG :tmi.twitch.tv\r\n")
             return
 
-        # Standard PRIVMSG format (with or without leading @tags):
-        # [@tags ]:user!user@user.tmi.twitch.tv PRIVMSG #channel :message
+        # Parse IRCv3 tag block (@key=value;...) present on all Twitch messages
+        tags: dict[str, str] = {}
+        if line.startswith("@"):
+            tag_str, _, line = line[1:].partition(" ")
+            for pair in tag_str.split(";"):
+                k, _, v = pair.partition("=")
+                tags[k] = v
+
         m = re.search(r":(\w+)!\w+@\S+\.tmi\.twitch\.tv PRIVMSG #\S+ :(.+)", line)
         if m:
-            self.on_message(m.group(1), m.group(2).strip())
+            bits      = int(tags.get("bits", 0) or 0)
+            reward_id = tags.get("custom-reward-id", "")
+            self.on_message(m.group(1), m.group(2).strip(), bits, reward_id)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -654,38 +662,76 @@ class TwitchBotApp(ctk.CTk):
             ),
         )
 
-        # Options
+        # Trigger Conditions
         opts = ctk.CTkFrame(tab, corner_radius=8)
         opts.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
-        opts.grid_columnconfigure(1, weight=1)
+        opts.grid_columnconfigure(0, weight=1)
 
-        def opt_row(label: str, widget_fn, row: int):
-            ctk.CTkLabel(opts, text=label, anchor="e").grid(
-                row=row, column=0, sticky="e", padx=(14, 8), pady=7)
-            w = widget_fn()
-            w.grid(row=row, column=1, sticky="w", padx=(0, 14), pady=7)
-            return w
+        ctk.CTkLabel(
+            opts, text="Trigger Conditions",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#6fa3d0",
+        ).grid(row=0, column=0, sticky="w", padx=14, pady=(10, 6))
 
-        self._e_every_n = opt_row(
-            "Respond every N messages:",
-            lambda: ctk.CTkEntry(opts, width=60),
-            0,
-        )
+        # Every N messages
+        row_n = ctk.CTkFrame(opts, fg_color="transparent")
+        row_n.grid(row=1, column=0, sticky="w", padx=14, pady=3)
+        self._var_every_n_enabled = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(row_n, text="Every", variable=self._var_every_n_enabled,
+                        width=78).pack(side="left")
+        self._e_every_n = ctk.CTkEntry(row_n, width=55)
         self._e_every_n.insert(0, "5")
+        self._e_every_n.pack(side="left", padx=6)
+        ctk.CTkLabel(row_n, text="messages").pack(side="left")
 
+        # @bot mentions
+        row_m = ctk.CTkFrame(opts, fg_color="transparent")
+        row_m.grid(row=2, column=0, sticky="w", padx=14, pady=3)
         self._var_mentions = ctk.BooleanVar(value=False)
-        opt_row(
-            "Respond to @bot mentions only:",
-            lambda: ctk.CTkCheckBox(opts, text="", variable=self._var_mentions),
-            1,
-        )
+        ctk.CTkCheckBox(row_m, text="@bot mentions", variable=self._var_mentions).pack(side="left")
 
+        # Bits cheer
+        row_b = ctk.CTkFrame(opts, fg_color="transparent")
+        row_b.grid(row=3, column=0, sticky="w", padx=14, pady=3)
+        self._var_trigger_bits = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(row_b, text="Bits cheer  ≥",
+                        variable=self._var_trigger_bits, width=138).pack(side="left")
+        self._e_min_bits = ctk.CTkEntry(row_b, width=65, placeholder_text="100")
+        self._e_min_bits.pack(side="left", padx=6)
+        ctk.CTkLabel(row_b, text="bits").pack(side="left")
+
+        # Channel Point redeem
+        row_p = ctk.CTkFrame(opts, fg_color="transparent")
+        row_p.grid(row=4, column=0, sticky="w", padx=14, pady=(6, 2))
+        self._var_trigger_points = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(row_p, text="Channel Point redeem",
+                        variable=self._var_trigger_points).pack(side="left")
+
+        row_pid = ctk.CTkFrame(opts, fg_color="transparent")
+        row_pid.grid(row=5, column=0, sticky="ew", padx=(42, 14), pady=(2, 0))
+        row_pid.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(row_pid, text="Reward ID:", anchor="e").grid(
+            row=0, column=0, sticky="e", padx=(0, 8))
+        self._e_reward_id = ctk.CTkEntry(
+            row_pid, placeholder_text="leave blank for any redemption")
+        self._e_reward_id.grid(row=0, column=1, sticky="ew")
+
+        ctk.CTkLabel(
+            opts,
+            text="Tip: reward IDs are logged to the Console tab when a redemption arrives.",
+            text_color="gray", font=ctk.CTkFont(size=11),
+        ).grid(row=6, column=0, sticky="w", padx=(42, 14), pady=(2, 8))
+
+        # Divider
+        ctk.CTkFrame(opts, height=1, fg_color="#333").grid(
+            row=7, column=0, sticky="ew", padx=14, pady=4)
+
+        # TTS option
+        row_tts = ctk.CTkFrame(opts, fg_color="transparent")
+        row_tts.grid(row=8, column=0, sticky="w", padx=14, pady=(4, 10))
         self._var_tts_ai = ctk.BooleanVar(value=True)
-        opt_row(
-            "Speak AI replies via TTS:",
-            lambda: ctk.CTkCheckBox(opts, text="", variable=self._var_tts_ai),
-            2,
-        )
+        ctk.CTkLabel(row_tts, text="Speak AI replies via TTS:").pack(side="left", padx=(0, 8))
+        ctk.CTkCheckBox(row_tts, text="", variable=self._var_tts_ai).pack(side="left")
 
         # System prompt header with save/load buttons
         prompt_hdr = ctk.CTkFrame(tab, fg_color="transparent")
@@ -816,15 +862,18 @@ class TwitchBotApp(ctk.CTk):
     # Message dispatch  (called from IRC thread)
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _dispatch(self, username: str, message: str) -> None:
+    def _dispatch(self, username: str, message: str, bits: int = 0, reward_id: str = "") -> None:
         """
         Central dispatcher — routes each PRIVMSG to the Plays system and/or
         the AI system.  Runs on the IRC background thread; must never touch
         Tkinter widgets directly.  Use _log() which is queue-safe.
         """
-        self._log(f"[Chat] {username}: {message}")
+        tag = f"  [{bits} bits]" if bits else (f"  [channel points]" if reward_id else "")
+        self._log(f"[Chat] {username}{tag}: {message}")
+        if reward_id:
+            self._log(f"[Chat] Reward ID: {reward_id}")
         self._route_plays(username, message)
-        self._route_ai(username, message)
+        self._route_ai(username, message, bits, reward_id)
 
         # Update connection status indicator the first time a message arrives
         self.after(0, lambda: self._lbl_conn_status.configure(
@@ -842,25 +891,45 @@ class TwitchBotApp(ctk.CTk):
             entry["key"], entry["duration"]
         )
 
-    def _route_ai(self, username: str, message: str) -> None:
+    def _route_ai(self, username: str, message: str, bits: int = 0, reward_id: str = "") -> None:
         if not self.ai_enabled.get():
             return
 
+        triggered = False
+
         if self._var_mentions.get():
             bot = self.e_username.get().lower()
-            if bot and bot not in message.lower():
-                return
-            self._ai.handle(username, message)
-            return
+            if bot and bot in message.lower():
+                triggered = True
 
-        try:
-            every_n = max(1, int(self._e_every_n.get()))
-        except ValueError:
-            every_n = 5
+        if self._var_trigger_bits.get() and bits > 0:
+            try:
+                min_bits = max(1, int(self._e_min_bits.get().strip() or "1"))
+            except ValueError:
+                min_bits = 1
+            if bits >= min_bits:
+                triggered = True
+                self._log(f"[AI] Bits trigger: {username} cheered {bits} bits")
 
-        self._ai_counter += 1
-        if self._ai_counter >= every_n:
-            self._ai_counter = 0
+        if self._var_trigger_points.get() and reward_id:
+            required = self._e_reward_id.get().strip()
+            if not required or reward_id.lower() == required.lower():
+                triggered = True
+                self._log(f"[AI] Points trigger: {username} redeemed (ID: {reward_id})")
+            else:
+                self._log(f"[AI] Unmatched redemption — reward ID: {reward_id}")
+
+        if self._var_every_n_enabled.get():
+            try:
+                every_n = max(1, int(self._e_every_n.get()))
+            except ValueError:
+                every_n = 5
+            self._ai_counter += 1
+            if self._ai_counter >= every_n:
+                self._ai_counter = 0
+                triggered = True
+
+        if triggered:
             self._ai.handle(username, message)
 
     # ══════════════════════════════════════════════════════════════════════════

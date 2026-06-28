@@ -7,6 +7,7 @@ A customizable Twitch stream interaction tool with Twitch Plays game control, AI
 - **Twitch Plays** — map chat commands (e.g. `!jump`) to keyboard keys with configurable hold durations
 - **AI Chat Responses** — connects to a local LLM (Ollama / LM Studio) and responds to chat every N messages or on @mentions
 - **Text-to-Speech** — speaks AI replies aloud using [Piper TTS](https://github.com/rhasspy/piper) + pygame
+- **Flexible AI Triggers** — fire the AI on every N messages, @mentions, bits cheers (with a minimum threshold), or specific channel point redemptions
 - **System Prompt Manager** — save and load named system prompts from the `prompts/` folder
 - **Dark GUI** — built with [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter)
 
@@ -33,7 +34,7 @@ python twitch_bot.py
 
 1. **Connection tab** — enter your Twitch channel, bot username, and OAuth token (`oauth:...`). Configure the LLM endpoint/model and optionally Piper TTS paths, then click **Connect**.
 2. **Twitch Plays tab** — add `!command → key` mappings and toggle game input on/off.
-3. **AI Interaction tab** — enable AI responses, set how often it responds, edit the system prompt, and save/load prompts from the `prompts/` folder.
+3. **AI Interaction tab** — enable AI responses, configure trigger conditions (every N messages, @mentions, bits, channel points), edit the system prompt, and save/load prompts from the `prompts/` folder.
 4. **Console tab** — live log output from all threads.
 
 ### Getting a Twitch OAuth token
