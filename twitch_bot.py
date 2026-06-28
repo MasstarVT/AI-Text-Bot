@@ -489,6 +489,10 @@ class TwitchBotApp(ctk.CTk):
         self._log("[System] Ready.")
         self._log_platform_info()
 
+        # Auto-save settings every 10 seconds so state persists even if
+        # the process is killed rather than closed gracefully
+        self._autosave()
+
         # Auto-connect if all credentials are already saved
         if all(self._env.get(k) for k in ("TWITCH_CHANNEL", "TWITCH_USERNAME", "TWITCH_TOKEN")):
             self.after(800, self._connect)
@@ -1105,6 +1109,7 @@ class TwitchBotApp(ctk.CTk):
         "tts_ai":            True,
         "plays_enabled":     False,
         "command_map":       {},
+        "last_prompt":       "",
     }
 
     def _load_settings(self) -> dict:
@@ -1116,6 +1121,10 @@ class TwitchBotApp(ctk.CTk):
             except Exception:
                 pass
         return s
+
+    def _autosave(self) -> None:
+        self._save_settings()
+        self.after(10_000, self._autosave)
 
     def _save_settings(self) -> None:
         try:
@@ -1139,6 +1148,7 @@ class TwitchBotApp(ctk.CTk):
             "tts_ai":           self._var_tts_ai.get(),
             "plays_enabled":    self.game_input_enabled.get(),
             "command_map":      self.command_map,
+            "last_prompt":      self._prompt_combo.get().strip(),
         }
         with open(self._settings_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -1161,6 +1171,11 @@ class TwitchBotApp(ctk.CTk):
         self.game_input_enabled.set(s["plays_enabled"])
         self.command_map = {k: v for k, v in s.get("command_map", {}).items()}
         self._refresh_plays()
+        # Restore last loaded prompt
+        last = s.get("last_prompt", "")
+        if last:
+            self._prompt_combo.set(last)
+            self._on_prompt_selected(last)
 
     # ══════════════════════════════════════════════════════════════════════════
     # OAuth helper

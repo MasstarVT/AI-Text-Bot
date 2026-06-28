@@ -39,7 +39,7 @@ python twitch_bot.py
 
 ### Getting a Twitch OAuth token
 
-Generate one at <https://twitchapps.com/tmi/> — it will look like `oauth:xxxxxxxxxxxxxxxx`.
+Use the built-in **Get OAuth Token** button on the Connection tab (requires a Twitch Developer Console app with `http://localhost` as a redirect URI). Copy the URL shown in the Console tab, open it in your browser, authorize, then copy the `access_token` value from the redirect URL and paste it into the OAuth Token field.
 
 ### Local LLM setup
 
@@ -53,6 +53,7 @@ AI Text Bot/
 ├── twitch_bot.py      # Main application
 ├── requirements.txt
 ├── .env               # Saved connection settings (git-ignored, created on first Connect)
+├── settings.json      # UI state (AI toggles, trigger settings, last prompt — auto-saved every 10s)
 ├── piper/             # Bundled Piper TTS binary (git-ignored)
 │   └── piper          # The executable — auto-detected and pre-filled in the UI
 ├── prompts/           # Saved system prompts (created automatically)
