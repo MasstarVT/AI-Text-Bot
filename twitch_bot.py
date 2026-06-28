@@ -36,7 +36,6 @@ import tempfile
 import threading
 import time
 from datetime import datetime
-import webbrowser
 from tkinter import filedialog
 
 import customtkinter as ctk
@@ -1071,15 +1070,19 @@ class TwitchBotApp(ctk.CTk):
             "&response_type=token"
             f"&scope={scope}"
         )
-        webbrowser.open(url)
 
-        # Switch to Console tab so the user sees the instructions immediately
+        # Copy URL to clipboard — launching a browser from Tkinter on Linux
+        # corrupts the display context, so we let the user open it themselves.
+        self.clipboard_clear()
+        self.clipboard_append(url)
+
         self._tabs.set("Console")
-        self._log("[Auth] Browser opened — authorize on Twitch, then follow these steps:")
+        self._log("[Auth] Auth URL copied to clipboard — paste it into your browser.")
+        self._log(f"[Auth] URL: {url}")
         self._log("[Auth]   1. Click Authorize on the Twitch page.")
-        self._log("[Auth]   2. Your browser redirects to localhost (error page is fine).")
+        self._log("[Auth]   2. Browser redirects to localhost (error page is fine).")
         self._log("[Auth]   3. Copy everything between 'access_token=' and '&scope' in the address bar.")
-        self._log("[Auth]   4. Go back to the Connection tab and paste it into the OAuth Token field.")
+        self._log("[Auth]   4. Go to the Connection tab, paste it into the OAuth Token field.")
         self._log("[Auth]   5. Click Connect.")
 
     # ══════════════════════════════════════════════════════════════════════════
