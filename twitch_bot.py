@@ -480,8 +480,12 @@ class TwitchBotApp(ctk.CTk):
         self._start_services()
         self._poll_logs()
 
-        self._log("[System] Ready.  Fill in the Connection tab and click Connect.")
+        self._log("[System] Ready.")
         self._log_platform_info()
+
+        # Auto-connect if all credentials are already saved
+        if all(self._env.get(k) for k in ("TWITCH_CHANNEL", "TWITCH_USERNAME", "TWITCH_TOKEN")):
+            self.after(800, self._connect)
 
     # ── Platform diagnostics ─────────────────────────────────────────────────
 
@@ -806,7 +810,7 @@ class TwitchBotApp(ctk.CTk):
         ctk.CTkLabel(row_tts, text="Speak AI replies via TTS:").pack(side="left", padx=(0, 8))
         ctk.CTkCheckBox(row_tts, text="", variable=self._var_tts_ai).pack(side="left")
 
-        # System prompt header with save/load buttons
+        # System prompt header with dropdown + save
         prompt_hdr = ctk.CTkFrame(tab, fg_color="transparent")
         prompt_hdr.grid(row=2, column=0, sticky="ew", padx=10, pady=(8, 2))
         prompt_hdr.grid_columnconfigure(0, weight=1)
@@ -816,15 +820,20 @@ class TwitchBotApp(ctk.CTk):
             font=ctk.CTkFont(size=13, weight="bold"),
         ).grid(row=0, column=0, sticky="w", padx=4)
 
-        btn_bar = ctk.CTkFrame(prompt_hdr, fg_color="transparent")
-        btn_bar.grid(row=0, column=1, sticky="e")
+        ctrl_bar = ctk.CTkFrame(prompt_hdr, fg_color="transparent")
+        ctrl_bar.grid(row=0, column=1, sticky="e")
+
+        self._prompt_combo = ctk.CTkComboBox(
+            ctrl_bar, width=200,
+            values=self._list_prompts(),
+            command=self._on_prompt_selected,
+        )
+        self._prompt_combo.set("")
+        self._prompt_combo.pack(side="left", padx=(0, 6))
+
         ctk.CTkButton(
-            btn_bar, text="Save Prompt", width=112,
+            ctrl_bar, text="Save", width=80,
             command=self._save_prompt,
-        ).pack(side="left", padx=(0, 6))
-        ctk.CTkButton(
-            btn_bar, text="Load Prompt", width=112,
-            command=self._load_prompt,
         ).pack(side="left")
 
         self._system_prompt = ctk.CTkTextbox(
@@ -1140,10 +1149,29 @@ class TwitchBotApp(ctk.CTk):
     # Prompt save / load
     # ══════════════════════════════════════════════════════════════════════════
 
-    def _save_prompt(self) -> None:
-        dialog = ctk.CTkInputDialog(text="Enter a name for this prompt:", title="Save Prompt")
-        name = dialog.get_input()
+    def _list_prompts(self) -> list[str]:
+        """Return sorted prompt names (filenames without .txt) from the prompts dir."""
+        if not os.path.isdir(self._prompts_dir):
+            return []
+        return sorted(f[:-4] for f in os.listdir(self._prompts_dir) if f.endswith(".txt"))
+
+    def _on_prompt_selected(self, name: str) -> None:
+        """Load a prompt when the user picks one from the dropdown."""
         if not name:
+            return
+        path = os.path.join(self._prompts_dir, f"{name}.txt")
+        if not os.path.exists(path):
+            return
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self._system_prompt.delete("1.0", "end")
+        self._system_prompt.insert("1.0", content)
+        self._log(f"[Prompts] Loaded ← {name}")
+
+    def _save_prompt(self) -> None:
+        name = self._prompt_combo.get().strip()
+        if not name:
+            self._log("[Prompts] Type a name in the prompt box first.")
             return
         safe = re.sub(r'[^\w\s\-]', '', name).strip()
         if not safe:
@@ -1153,21 +1181,10 @@ class TwitchBotApp(ctk.CTk):
         content = self._system_prompt.get("1.0", "end-1c")
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
-        self._log(f"[Prompts] Saved → prompts/{safe}.txt")
-
-    def _load_prompt(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Load System Prompt",
-            initialdir=self._prompts_dir,
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-        )
-        if not path:
-            return
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-        self._system_prompt.delete("1.0", "end")
-        self._system_prompt.insert("1.0", content)
-        self._log(f"[Prompts] Loaded ← {os.path.basename(path)}")
+        # Refresh dropdown and keep the saved name selected
+        self._prompt_combo.configure(values=self._list_prompts())
+        self._prompt_combo.set(safe)
+        self._log(f"[Prompts] Saved → {safe}")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Thread-safe logging
