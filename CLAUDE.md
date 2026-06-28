@@ -40,6 +40,12 @@ Four independent checkboxes — AI fires if **any** enabled condition is met:
 
 Bits and channel-point data come from IRCv3 tags parsed in `TwitchIRCClient._handle`. Only text-required channel point redemptions appear in IRC; reward IDs are logged to the Console so users can copy them.
 
+## Bundled Piper TTS (`piper/`)
+
+Piper TTS 2023.11.14-2 (Linux x86_64) is extracted into `piper/` next to the script. The directory is git-ignored (25 MB binary bundle). On startup, `_build_connection` checks for `piper/piper` and auto-fills the Piper Executable field if the `.env` entry is blank — so users don't need to configure anything beyond their voice model.
+
+To re-download: `curl -L https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz | tar -xz`
+
 ## Settings persistence (`.env`)
 
 Connection fields (channel, username, token, LLM endpoint/model, Piper paths) are saved to `.env` next to the script whenever the user clicks **Connect**. On next launch, `_load_env()` parses the file before `_build_ui()` runs so `_build_connection` can pre-fill the entries.

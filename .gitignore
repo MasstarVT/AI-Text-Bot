@@ -4,6 +4,9 @@
 # Python virtual environment
 .venv/
 
+# Bundled Piper TTS binary (25 MB — downloaded separately)
+piper/
+
 # Byte-compiled files
 __pycache__/
 *.pyc

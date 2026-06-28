@@ -15,7 +15,7 @@ A customizable Twitch stream interaction tool with Twitch Plays game control, AI
 
 - Python 3.10+
 - A running local LLM server (Ollama or LM Studio)
-- Piper TTS binary + a `.onnx` voice model (optional, for audio)
+- A Piper `.onnx` voice model (optional, for audio — the binary is bundled in `piper/`)
 
 ## Installation
 
@@ -53,6 +53,8 @@ AI Text Bot/
 ├── twitch_bot.py      # Main application
 ├── requirements.txt
 ├── .env               # Saved connection settings (git-ignored, created on first Connect)
+├── piper/             # Bundled Piper TTS binary (git-ignored)
+│   └── piper          # The executable — auto-detected and pre-filled in the UI
 ├── prompts/           # Saved system prompts (created automatically)
 └── README.md
 ```

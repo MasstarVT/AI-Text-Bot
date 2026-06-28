@@ -556,10 +556,14 @@ class TwitchBotApp(ctk.CTk):
               default=e.get("LLM_MODEL", "llama3"), placeholder="llama3")
 
         # ── Piper TTS ─────────────────────────────────────────────────────────
+        # Auto-detect the bundled piper binary when no .env entry exists yet
+        _local_piper = os.path.join(os.path.dirname(self._env_path), "piper", "piper")
+        _default_piper = _local_piper if os.path.exists(_local_piper) else ""
+
         section("Piper TTS")
         file_field("Piper Executable",     "e_piper_exe",
                    placeholder="piper  or  /path/to/piper",
-                   default=e.get("PIPER_EXE", ""))
+                   default=e.get("PIPER_EXE") or _default_piper)
         file_field("Voice Model  (.onnx)", "e_piper_model",
                    placeholder="/path/to/voice.onnx",
                    default=e.get("PIPER_MODEL", ""))
