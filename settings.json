@@ -1,7 +1,7 @@
 {
-  "ai_enabled": false,
+  "ai_enabled": true,
   "trigger_every_n": true,
-  "every_n": 5,
+  "every_n": 1,
   "trigger_mentions": false,
   "trigger_bits": false,
   "min_bits": 100,
@@ -10,5 +10,5 @@
   "tts_ai": true,
   "plays_enabled": false,
   "command_map": {},
-  "last_prompt": ""
+  "last_prompt": "Main"
 }

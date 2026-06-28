@@ -514,18 +514,26 @@ class TwitchBotApp(ctk.CTk):
 
     def _build_ui(self) -> None:
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
-        self._tabs = ctk.CTkTabview(self, anchor="nw")
-        self._tabs.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+        self._build_header()
+        self._create_settings_window()
 
-        for name in ("Connection", "Twitch Plays", "AI Interaction", "Console"):
-            self._tabs.add(name)
+        main = ctk.CTkFrame(self, fg_color="transparent")
+        main.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 4))
+        main.grid_columnconfigure(0, weight=1)
+        main.grid_columnconfigure(1, weight=1)
+        main.grid_rowconfigure(0, weight=1)
 
-        self._build_connection(self._tabs.tab("Connection"))
-        self._build_plays(self._tabs.tab("Twitch Plays"))
-        self._build_ai(self._tabs.tab("AI Interaction"))
-        self._build_console(self._tabs.tab("Console"))
+        plays_frame = ctk.CTkFrame(main, corner_radius=8)
+        plays_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        self._build_plays(plays_frame)
+
+        ai_frame = ctk.CTkFrame(main, corner_radius=8)
+        ai_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        self._build_ai(ai_frame)
+
+        self._build_console_section()
 
     # ── Connection tab ────────────────────────────────────────────────────────
 
@@ -633,29 +641,7 @@ class TwitchBotApp(ctk.CTk):
                    placeholder="/path/to/voice.onnx.json  (optional)",
                    default=e.get("PIPER_CONFIG", ""))
 
-        # ── Action buttons ────────────────────────────────────────────────────
-        btn_row = ctk.CTkFrame(tab, fg_color="transparent")
-        btn_row.grid(row=r, column=0, columnspan=2, padx=14, pady=18, sticky="w")
-
-        self._btn_connect = ctk.CTkButton(
-            btn_row, text="Connect", width=130,
-            fg_color=_GREEN[0], hover_color=_GREEN[1],
-            command=self._connect,
-        )
-        self._btn_connect.pack(side="left", padx=(0, 10))
-
-        self._btn_disconnect = ctk.CTkButton(
-            btn_row, text="Disconnect", width=130, state="disabled",
-            fg_color=_RED[0], hover_color=_RED[1],
-            command=self._disconnect,
-        )
-        self._btn_disconnect.pack(side="left", padx=(0, 10))
-
-        self._lbl_conn_status = ctk.CTkLabel(
-            btn_row, text="● Disconnected", text_color=OFF_FG,
-            font=ctk.CTkFont(size=12),
-        )
-        self._lbl_conn_status.pack(side="left", padx=8)
+        # Connect / Disconnect live in the main window header bar
 
     # ── Twitch Plays tab ──────────────────────────────────────────────────────
 
@@ -858,27 +844,103 @@ class TwitchBotApp(ctk.CTk):
             "Never start a reply with 'Sure', 'Of course', or 'Certainly'.",
         )
 
-    # ── Console tab ───────────────────────────────────────────────────────────
+    # ── Header bar ────────────────────────────────────────────────────────────
 
-    def _build_console(self, tab: ctk.CTkFrame) -> None:
-        tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(0, weight=1)
+    def _build_header(self) -> None:
+        hdr = ctk.CTkFrame(self, corner_radius=0, height=48)
+        hdr.grid(row=0, column=0, sticky="ew")
+        hdr.grid_propagate(False)
+        hdr.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            hdr, text="Twitch Interactive Bot",
+            font=ctk.CTkFont(size=14, weight="bold"),
+        ).grid(row=0, column=0, sticky="w", padx=16, pady=10)
+
+        self._lbl_conn_status = ctk.CTkLabel(
+            hdr, text="● Disconnected", text_color=OFF_FG,
+            font=ctk.CTkFont(size=12),
+        )
+        self._lbl_conn_status.grid(row=0, column=3, padx=(0, 14), pady=10)
+
+        self._btn_disconnect = ctk.CTkButton(
+            hdr, text="Disconnect", width=120, state="disabled",
+            fg_color=_RED[0], hover_color=_RED[1],
+            command=self._disconnect,
+        )
+        self._btn_disconnect.grid(row=0, column=2, padx=(0, 8), pady=10)
+
+        self._btn_connect = ctk.CTkButton(
+            hdr, text="Connect", width=110,
+            fg_color=_GREEN[0], hover_color=_GREEN[1],
+            command=self._connect,
+        )
+        self._btn_connect.grid(row=0, column=1, padx=(0, 6), pady=10)
+
+    # ── Settings window (hidden until cog is clicked) ─────────────────────────
+
+    def _create_settings_window(self) -> None:
+        win = ctk.CTkToplevel(self)
+        win.title("Connection Settings")
+        win.geometry("640x700")
+        win.resizable(False, True)
+        win.transient(self)
+        win.protocol("WM_DELETE_WINDOW", win.withdraw)
+        self._settings_win = win
+
+        win.grid_columnconfigure(0, weight=1)
+        win.grid_rowconfigure(0, weight=1)
+        inner = ctk.CTkFrame(win, fg_color="transparent")
+        inner.grid(row=0, column=0, sticky="nsew")
+        inner.grid_columnconfigure(1, weight=1)
+        self._build_connection(inner)
+
+        win.withdraw()
+
+    def _open_settings(self) -> None:
+        self._settings_win.deiconify()
+        self._settings_win.lift()
+        self._settings_win.focus()
+
+    # ── Console section (pinned to bottom of main window) ─────────────────────
+
+    def _build_console_section(self) -> None:
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.grid(row=2, column=0, sticky="ew", padx=10, pady=(4, 0))
+        bar.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            bar, text="Console",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(
+            bar, text="Clear Console", width=120,
+            command=self._clear_console,
+        ).grid(row=0, column=1)
 
         self._console = ctk.CTkTextbox(
-            tab,
+            self, height=190,
             state="disabled",
             font=ctk.CTkFont(family="Courier", size=12),
             text_color="#c8c8c8",
             wrap="word",
         )
-        self._console.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 4))
+        self._console.grid(row=3, column=0, sticky="ew", padx=10, pady=(2, 0))
 
-        bar = ctk.CTkFrame(tab, fg_color="transparent")
-        bar.grid(row=1, column=0, sticky="ew", padx=10, pady=4)
-        ctk.CTkButton(bar, text="Clear Console", width=120,
-                      command=self._clear_console).pack(side="left")
-        ctk.CTkLabel(bar, text="Logs from all threads appear here.",
-                     text_color="gray").pack(side="left", padx=14)
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.grid(row=4, column=0, sticky="ew", padx=10, pady=(6, 8))
+
+        ctk.CTkButton(
+            footer, text="⚙", width=38, height=32,
+            font=ctk.CTkFont(size=15),
+            fg_color="#2b2d42",
+            hover_color="#3d3f5c",
+            command=self._open_settings,
+        ).pack(side="left")
+        ctk.CTkLabel(
+            footer, text="Connection Settings",
+            text_color="gray", font=ctk.CTkFont(size=11),
+        ).pack(side="left", padx=8)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Service lifecycle
@@ -1196,7 +1258,6 @@ class TwitchBotApp(ctk.CTk):
             f"&scope={scope}"
         )
 
-        self._tabs.set("Console")
         self._log("[Auth] ── OAuth Authorization URL (copy and open in your browser) ──")
         self._log(url)
         self._log("[Auth] Steps after authorizing:")

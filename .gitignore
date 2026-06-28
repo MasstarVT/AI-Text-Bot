@@ -7,6 +7,9 @@
 # Bundled Piper TTS binary (25 MB — downloaded separately)
 piper/
 
+# Voice model binaries (large — only commit the .json config)
+Voices/*.onnx
+
 # Byte-compiled files
 __pycache__/
 *.pyc

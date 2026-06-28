@@ -32,14 +32,17 @@ pip install -r requirements.txt
 python twitch_bot.py
 ```
 
-1. **Connection tab** — enter your Twitch channel, bot username, and OAuth token (`oauth:...`). Configure the LLM endpoint/model and optionally Piper TTS paths, then click **Connect**.
-2. **Twitch Plays tab** — add `!command → key` mappings and toggle game input on/off.
-3. **AI Interaction tab** — enable AI responses, configure trigger conditions (every N messages, @mentions, bits, channel points), edit the system prompt, and save/load prompts from the `prompts/` folder.
-4. **Console tab** — live log output from all threads.
+The UI has no tabs — everything is visible at a glance:
+
+1. **Header bar** — click **Connect** after filling in credentials, or **Disconnect** to stop. A status indicator shows the live connection state.
+2. **Left panel (Twitch Plays)** — add `!command → key` mappings and toggle game input on/off.
+3. **Right panel (AI Interaction)** — enable AI responses, configure trigger conditions (every N messages, @mentions, bits, channel points), edit the system prompt, and save/load prompts from the `prompts/` folder.
+4. **Console** — pinned to the bottom; live log output from all threads.
+5. **⚙ Connection Settings** — click the gear button in the footer to open the connection settings popup (Twitch credentials, LLM endpoint/model, Piper TTS paths).
 
 ### Getting a Twitch OAuth token
 
-Use the built-in **Get OAuth Token** button on the Connection tab (requires a Twitch Developer Console app with `http://localhost` as a redirect URI). Copy the URL shown in the Console tab, open it in your browser, authorize, then copy the `access_token` value from the redirect URL and paste it into the OAuth Token field.
+Use the built-in **Get OAuth Token** button in Connection Settings (requires a Twitch Developer Console app with `http://localhost` as a redirect URI). Copy the URL shown in the Console, open it in your browser, authorize, then copy the `access_token` value from the redirect URL and paste it into the OAuth Token field.
 
 ### Local LLM setup
 
@@ -56,6 +59,7 @@ AI Text Bot/
 ├── settings.json      # UI state (AI toggles, trigger settings, last prompt — auto-saved every 10s)
 ├── piper/             # Bundled Piper TTS binary (git-ignored)
 │   └── piper          # The executable — auto-detected and pre-filled in the UI
+├── Voices/            # Voice model files — .onnx binaries are git-ignored; .json configs committed
 ├── prompts/           # Saved system prompts (created automatically)
 └── README.md
 ```

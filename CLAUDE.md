@@ -54,9 +54,25 @@ Connection fields (channel, username, token, LLM endpoint/model, Piper paths) ar
 
 `.env` key names: `TWITCH_CHANNEL`, `TWITCH_USERNAME`, `TWITCH_TOKEN`, `LLM_ENDPOINT`, `LLM_MODEL`, `PIPER_EXE`, `PIPER_MODEL`, `PIPER_CONFIG`.
 
+## UI layout
+
+The app has no tabs. Layout is:
+
+- **Row 0** — `_build_header()`: fixed 48 px header bar with title, Connect/Disconnect buttons, and status label.
+- **Row 1** — two-column `CTkFrame`: left = Twitch Plays (`_build_plays`), right = AI Interaction (`_build_ai`).
+- **Row 2** — console label bar + Clear button (`_build_console_section`).
+- **Row 3** — `CTkTextbox` console (height=190, read-only).
+- **Row 4** — footer with ⚙ gear button that calls `_open_settings()`.
+
+Connection Settings live in a `CTkToplevel` (`_settings_win`) built by `_create_settings_window()` — hidden on startup, shown/hidden via `_open_settings()` / `win.withdraw()`. `_build_connection()` populates this window.
+
 ## Saved prompts
 
-System prompts are saved as `.txt` files in `prompts/` (created next to the script on first run). Save/Load buttons are in the AI Interaction tab.
+System prompts are saved as `.txt` files in `prompts/` (created next to the script on first run). Save/Load buttons are in the AI Interaction panel.
+
+## Voices directory
+
+`Voices/` stores Piper voice models next to the script. `.onnx` binaries are git-ignored (large); `.json` config sidecars are committed.
 
 ## Dependencies
 
