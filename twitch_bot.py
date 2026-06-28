@@ -410,6 +410,10 @@ class TwitchBotApp(ctk.CTk):
         self.geometry("1140x780")
         self.minsize(960, 640)
 
+        # Prompts directory (next to this script)
+        self._prompts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts")
+        os.makedirs(self._prompts_dir, exist_ok=True)
+
         # Runtime toggle state
         self.game_input_enabled = ctk.BooleanVar(value=False)
         self.ai_enabled         = ctk.BooleanVar(value=False)
@@ -683,11 +687,26 @@ class TwitchBotApp(ctk.CTk):
             2,
         )
 
-        # System prompt label + textbox
+        # System prompt header with save/load buttons
+        prompt_hdr = ctk.CTkFrame(tab, fg_color="transparent")
+        prompt_hdr.grid(row=2, column=0, sticky="ew", padx=10, pady=(8, 2))
+        prompt_hdr.grid_columnconfigure(0, weight=1)
+
         ctk.CTkLabel(
-            tab, text="System Prompt",
+            prompt_hdr, text="System Prompt",
             font=ctk.CTkFont(size=13, weight="bold"),
-        ).grid(row=2, column=0, sticky="w", padx=14, pady=(8, 2))
+        ).grid(row=0, column=0, sticky="w", padx=4)
+
+        btn_bar = ctk.CTkFrame(prompt_hdr, fg_color="transparent")
+        btn_bar.grid(row=0, column=1, sticky="e")
+        ctk.CTkButton(
+            btn_bar, text="Save Prompt", width=112,
+            command=self._save_prompt,
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            btn_bar, text="Load Prompt", width=112,
+            command=self._load_prompt,
+        ).pack(side="left")
 
         self._system_prompt = ctk.CTkTextbox(
             tab, font=ctk.CTkFont(family="Courier", size=12),
@@ -911,6 +930,39 @@ class TwitchBotApp(ctk.CTk):
                 fg_color=_RED[0], hover_color=_RED[1],
                 command=lambda c=cmd: self._remove_mapping(c),
             ).grid(row=0, column=2, padx=12, pady=8)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Prompt save / load
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _save_prompt(self) -> None:
+        dialog = ctk.CTkInputDialog(text="Enter a name for this prompt:", title="Save Prompt")
+        name = dialog.get_input()
+        if not name:
+            return
+        safe = re.sub(r'[^\w\s\-]', '', name).strip()
+        if not safe:
+            self._log("[Prompts] Invalid name — use letters, numbers, spaces, or dashes.")
+            return
+        path = os.path.join(self._prompts_dir, f"{safe}.txt")
+        content = self._system_prompt.get("1.0", "end-1c")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        self._log(f"[Prompts] Saved → prompts/{safe}.txt")
+
+    def _load_prompt(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Load System Prompt",
+            initialdir=self._prompts_dir,
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self._system_prompt.delete("1.0", "end")
+        self._system_prompt.insert("1.0", content)
+        self._log(f"[Prompts] Loaded ← {os.path.basename(path)}")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Thread-safe logging
