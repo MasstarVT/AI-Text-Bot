@@ -263,14 +263,22 @@ class AIResponseHandler:
                 {"role": "user",   "content": f"{username}: {message}"},
             ],
             "stream": False,
-            "max_tokens": 150,
+            "max_tokens": 600,
         }
 
         try:
-            resp = requests.post(endpoint, json=payload, timeout=30)
+            resp = requests.post(endpoint, json=payload, timeout=60)
             resp.raise_for_status()
             data  = resp.json()
-            reply = data["choices"][0]["message"]["content"].strip()
+            msg   = data["choices"][0]["message"]
+            # Reasoning models (e.g. Gemma, QwQ) put the visible reply in
+            # "content" but spend tokens on a hidden "reasoning_content" block
+            # first.  If content is empty, fall back to reasoning_content so
+            # the bot always has something to say.
+            reply = (msg.get("content") or msg.get("reasoning_content") or "").strip()
+            if not reply:
+                self.log("[AI] Model returned an empty response.")
+                return
             self.log(f"[AI] → {reply}")
             if use_tts:
                 self.tts.speak(reply)
