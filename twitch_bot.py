@@ -27,6 +27,7 @@ Cross-thread communication:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import queue
@@ -450,8 +451,9 @@ class TwitchBotApp(ctk.CTk):
 
         # Paths next to this script
         _here = os.path.dirname(os.path.abspath(__file__))
-        self._prompts_dir = os.path.join(_here, "prompts")
-        self._env_path    = os.path.join(_here, ".env")
+        self._prompts_dir   = os.path.join(_here, "prompts")
+        self._env_path      = os.path.join(_here, ".env")
+        self._settings_path = os.path.join(_here, "settings.json")
         os.makedirs(self._prompts_dir, exist_ok=True)
 
         # Load persisted connection settings (populated before _build_ui so
@@ -477,6 +479,7 @@ class TwitchBotApp(ctk.CTk):
         self._ai:  AIResponseHandler | None = None
 
         self._build_ui()
+        self._apply_settings(self._load_settings())
         self._start_services()
         self._poll_logs()
 
@@ -1084,6 +1087,79 @@ class TwitchBotApp(ctk.CTk):
             ).grid(row=0, column=2, padx=12, pady=8)
 
     # ══════════════════════════════════════════════════════════════════════════
+    # Settings persistence (settings.json)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    _SETTINGS_DEFAULTS: dict = {
+        "ai_enabled":        False,
+        "trigger_every_n":   True,
+        "every_n":           5,
+        "trigger_mentions":  False,
+        "trigger_bits":      False,
+        "min_bits":          100,
+        "trigger_points":    False,
+        "reward_id":         "",
+        "tts_ai":            True,
+        "plays_enabled":     False,
+        "command_map":       {},
+    }
+
+    def _load_settings(self) -> dict:
+        s = dict(self._SETTINGS_DEFAULTS)
+        if os.path.exists(self._settings_path):
+            try:
+                with open(self._settings_path, encoding="utf-8") as f:
+                    s.update(json.load(f))
+            except Exception:
+                pass
+        return s
+
+    def _save_settings(self) -> None:
+        try:
+            every_n  = int(self._e_every_n.get().strip()   or "5")
+        except ValueError:
+            every_n  = 5
+        try:
+            min_bits = int(self._e_min_bits.get().strip()  or "100")
+        except ValueError:
+            min_bits = 100
+
+        data = {
+            "ai_enabled":       self.ai_enabled.get(),
+            "trigger_every_n":  self._var_every_n_enabled.get(),
+            "every_n":          every_n,
+            "trigger_mentions": self._var_mentions.get(),
+            "trigger_bits":     self._var_trigger_bits.get(),
+            "min_bits":         min_bits,
+            "trigger_points":   self._var_trigger_points.get(),
+            "reward_id":        self._e_reward_id.get().strip(),
+            "tts_ai":           self._var_tts_ai.get(),
+            "plays_enabled":    self.game_input_enabled.get(),
+            "command_map":      self.command_map,
+        }
+        with open(self._settings_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    def _apply_settings(self, s: dict) -> None:
+        # AI Interaction
+        self.ai_enabled.set(s["ai_enabled"])
+        self._var_every_n_enabled.set(s["trigger_every_n"])
+        self._e_every_n.delete(0, "end")
+        self._e_every_n.insert(0, str(s["every_n"]))
+        self._var_mentions.set(s["trigger_mentions"])
+        self._var_trigger_bits.set(s["trigger_bits"])
+        self._e_min_bits.delete(0, "end")
+        self._e_min_bits.insert(0, str(s["min_bits"]))
+        self._var_trigger_points.set(s["trigger_points"])
+        self._e_reward_id.delete(0, "end")
+        self._e_reward_id.insert(0, s["reward_id"])
+        self._var_tts_ai.set(s["tts_ai"])
+        # Twitch Plays
+        self.game_input_enabled.set(s["plays_enabled"])
+        self.command_map = {k: v for k, v in s.get("command_map", {}).items()}
+        self._refresh_plays()
+
+    # ══════════════════════════════════════════════════════════════════════════
     # OAuth helper
     # ══════════════════════════════════════════════════════════════════════════
 
@@ -1236,6 +1312,7 @@ class TwitchBotApp(ctk.CTk):
     # ══════════════════════════════════════════════════════════════════════════
 
     def on_closing(self) -> None:
+        self._save_settings()
         self._disconnect()
         self._stop_services()
         self.destroy()
