@@ -36,6 +36,7 @@ import tempfile
 import threading
 import time
 from datetime import datetime
+import webbrowser
 from tkinter import filedialog
 
 import customtkinter as ctk
@@ -549,6 +550,24 @@ class TwitchBotApp(ctk.CTk):
               default=e.get("TWITCH_CHANNEL", ""),  placeholder="channelname")
         field("Bot Username", "e_username",
               default=e.get("TWITCH_USERNAME", ""), placeholder="mybotname")
+
+        # Client ID row — entry + "Get OAuth Token" button on the same line
+        ctk.CTkLabel(tab, text="Client ID", anchor="e").grid(
+            row=r, column=0, sticky="e", padx=(14, 8), pady=5)
+        cid_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        cid_frame.grid(row=r, column=1, sticky="ew", padx=(0, 14), pady=5)
+        cid_frame.grid_columnconfigure(0, weight=1)
+        self.e_client_id = ctk.CTkEntry(
+            cid_frame, placeholder_text="your Twitch app client ID")
+        if e.get("TWITCH_CLIENT_ID"):
+            self.e_client_id.insert(0, e["TWITCH_CLIENT_ID"])
+        self.e_client_id.grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(
+            cid_frame, text="Get OAuth Token ↗", width=160,
+            command=self._get_oauth_token,
+        ).grid(row=0, column=1, padx=(8, 0))
+        r += 1
+
         field("OAuth Token",  "e_token",
               default=e.get("TWITCH_TOKEN", ""),
               placeholder="oauth:xxxxxxxxxxxxxxxx", secret=True)
@@ -1035,6 +1054,48 @@ class TwitchBotApp(ctk.CTk):
             ).grid(row=0, column=2, padx=12, pady=8)
 
     # ══════════════════════════════════════════════════════════════════════════
+    # OAuth helper
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _get_oauth_token(self) -> None:
+        client_id = self.e_client_id.get().strip()
+        if not client_id:
+            self._log("[Auth] Enter your Client ID before requesting a token.")
+            return
+
+        scope = "chat:read+chat:edit"
+        url = (
+            "https://id.twitch.tv/oauth2/authorize"
+            f"?client_id={client_id}"
+            "&redirect_uri=http://localhost"
+            "&response_type=token"
+            f"&scope={scope}"
+        )
+        webbrowser.open(url)
+
+        dialog = ctk.CTkInputDialog(
+            title="Paste OAuth Token",
+            text=(
+                "Your browser just opened the Twitch authorization page.\n\n"
+                "1. Click Authorize.\n"
+                "2. Your browser will redirect to localhost (it may show\n"
+                "   a 'can't connect' error — that's fine).\n"
+                "3. Look at the address bar. Copy the value between\n"
+                "   'access_token=' and the next '&'.\n\n"
+                "Paste that value here:"
+            ),
+        )
+        token = dialog.get_input()
+        if not token:
+            return
+        token = token.strip()
+        if not token.startswith("oauth:"):
+            token = f"oauth:{token}"
+        self.e_token.delete(0, "end")
+        self.e_token.insert(0, token)
+        self._log("[Auth] OAuth token set — click Connect when ready.")
+
+    # ══════════════════════════════════════════════════════════════════════════
     # .env persistence
     # ══════════════════════════════════════════════════════════════════════════
 
@@ -1055,6 +1116,7 @@ class TwitchBotApp(ctk.CTk):
         lines = [
             f"TWITCH_CHANNEL={self.e_channel.get().strip()}",
             f"TWITCH_USERNAME={self.e_username.get().strip()}",
+            f"TWITCH_CLIENT_ID={self.e_client_id.get().strip()}",
             f"TWITCH_TOKEN={self.e_token.get().strip()}",
             f"LLM_ENDPOINT={self.e_endpoint.get().strip()}",
             f"LLM_MODEL={self.e_model.get().strip()}",
