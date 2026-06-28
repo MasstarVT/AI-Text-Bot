@@ -1073,27 +1073,14 @@ class TwitchBotApp(ctk.CTk):
         )
         webbrowser.open(url)
 
-        dialog = ctk.CTkInputDialog(
-            title="Paste OAuth Token",
-            text=(
-                "Your browser just opened the Twitch authorization page.\n\n"
-                "1. Click Authorize.\n"
-                "2. Your browser will redirect to localhost (it may show\n"
-                "   a 'can't connect' error — that's fine).\n"
-                "3. Look at the address bar. Copy the value between\n"
-                "   'access_token=' and the next '&'.\n\n"
-                "Paste that value here:"
-            ),
-        )
-        token = dialog.get_input()
-        if not token:
-            return
-        token = token.strip()
-        if not token.startswith("oauth:"):
-            token = f"oauth:{token}"
-        self.e_token.delete(0, "end")
-        self.e_token.insert(0, token)
-        self._log("[Auth] OAuth token set — click Connect when ready.")
+        # Switch to Console tab so the user sees the instructions immediately
+        self._tabs.set("Console")
+        self._log("[Auth] Browser opened — authorize on Twitch, then follow these steps:")
+        self._log("[Auth]   1. Click Authorize on the Twitch page.")
+        self._log("[Auth]   2. Your browser redirects to localhost (error page is fine).")
+        self._log("[Auth]   3. Copy everything between 'access_token=' and '&scope' in the address bar.")
+        self._log("[Auth]   4. Go back to the Connection tab and paste it into the OAuth Token field.")
+        self._log("[Auth]   5. Click Connect.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # .env persistence
