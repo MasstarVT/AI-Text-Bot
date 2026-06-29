@@ -141,6 +141,9 @@ class TTSEngine:
         self.get_config = get_config   # callable → dict(piper_exe, model_path, config_path)
         self.log = log
         self._q: queue.Queue[str | None] = queue.Queue()
+        self._stop_event = threading.Event()
+        self._current_proc: subprocess.Popen | None = None
+        self._proc_lock = threading.Lock()
         threading.Thread(target=self._worker, name="TTS-Worker", daemon=True).start()
 
     def speak(self, text: str) -> None:
@@ -148,6 +151,29 @@ class TTSEngine:
 
     def stop(self) -> None:
         self._q.put(None)
+
+    def panic(self) -> None:
+        """Immediately silence all audio and drain the pending queue."""
+        # Drain pending items
+        while True:
+            try:
+                self._q.get_nowait()
+            except queue.Empty:
+                break
+        # Signal the play loop to abort
+        self._stop_event.set()
+        # Stop pygame playback
+        if HAS_PYGAME:
+            try:
+                pygame.mixer.stop()
+            except Exception:
+                pass
+        # Kill any running system-player subprocess
+        with self._proc_lock:
+            if self._current_proc and self._current_proc.poll() is None:
+                self._current_proc.kill()
+                self._current_proc = None
+        self._stop_event.clear()
 
     # ── worker ───────────────────────────────────────────────────────────────
 
@@ -207,11 +233,17 @@ class TTSEngine:
     _SYSTEM_PLAYERS = ("pw-play", "paplay", "aplay", "ffplay", "mpv")
 
     def _play(self, wav_path: str) -> None:
+        if self._stop_event.is_set():
+            return
+
         if HAS_PYGAME:
             try:
                 sound   = pygame.mixer.Sound(wav_path)
                 channel = sound.play()
                 while channel and channel.get_busy():
+                    if self._stop_event.is_set():
+                        channel.stop()
+                        return
                     time.sleep(0.05)
                 return
             except Exception as exc:
@@ -220,18 +252,26 @@ class TTSEngine:
         # pygame.mixer unavailable or failed — try system audio players
         for player in self._SYSTEM_PLAYERS:
             try:
-                result = subprocess.run(
+                proc = subprocess.Popen(
                     [player, wav_path],
-                    capture_output=True,
-                    timeout=30,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
-                if result.returncode == 0:
+                with self._proc_lock:
+                    self._current_proc = proc
+                try:
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    self.log(f"[TTS] {player} timed out.")
+                finally:
+                    with self._proc_lock:
+                        if self._current_proc is proc:
+                            self._current_proc = None
+                if proc.returncode == 0 or self._stop_event.is_set():
                     return
             except FileNotFoundError:
                 continue
-            except subprocess.TimeoutExpired:
-                self.log(f"[TTS] {player} timed out.")
-                return
             except Exception as exc:
                 self.log(f"[TTS] {player} error: {exc}")
 
@@ -874,21 +914,28 @@ class TwitchBotApp(ctk.CTk):
             hdr, text="● Disconnected", text_color=OFF_FG,
             font=ctk.CTkFont(size=12),
         )
-        self._lbl_conn_status.grid(row=0, column=3, padx=(0, 14), pady=10)
+        self._lbl_conn_status.grid(row=0, column=4, padx=(0, 14), pady=10)
 
         self._btn_disconnect = ctk.CTkButton(
             hdr, text="Disconnect", width=120, state="disabled",
             fg_color=_RED[0], hover_color=_RED[1],
             command=self._disconnect,
         )
-        self._btn_disconnect.grid(row=0, column=2, padx=(0, 8), pady=10)
+        self._btn_disconnect.grid(row=0, column=3, padx=(0, 8), pady=10)
 
         self._btn_connect = ctk.CTkButton(
             hdr, text="Connect", width=110,
             fg_color=_GREEN[0], hover_color=_GREEN[1],
             command=self._connect,
         )
-        self._btn_connect.grid(row=0, column=1, padx=(0, 6), pady=10)
+        self._btn_connect.grid(row=0, column=2, padx=(0, 6), pady=10)
+
+        ctk.CTkButton(
+            hdr, text="⏹ Panic", width=90,
+            fg_color="#8b0000", hover_color="#b22222",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self._panic_tts,
+        ).grid(row=0, column=1, padx=(0, 10), pady=10)
 
     # ── Settings window (hidden until cog is clicked) ─────────────────────────
 
@@ -1025,6 +1072,11 @@ class TwitchBotApp(ctk.CTk):
         self._btn_disconnect.configure(state="disabled")
         self._lbl_conn_status.configure(text="● Disconnected", text_color=OFF_FG)
         self._log("[System] Disconnected.")
+
+    def _panic_tts(self) -> None:
+        if self._tts:
+            self._tts.panic()
+        self._log("[TTS] Panic — audio stopped and queue cleared.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Message dispatch  (called from IRC thread)
