@@ -622,8 +622,21 @@ class TwitchBotApp(ctk.CTk):
             default=e.get("LLM_ENDPOINT", "http://localhost:11434/v1/chat/completions"),
             placeholder="http://localhost:11434/v1/chat/completions",
         )
-        field("Model Name", "e_model",
-              default=e.get("LLM_MODEL", "llama3"), placeholder="llama3")
+        # Model — combo populated by _fetch_models()
+        ctk.CTkLabel(tab, text="Model Name", anchor="e").grid(
+            row=r, column=0, sticky="e", padx=(14, 8), pady=5)
+        _mf = ctk.CTkFrame(tab, fg_color="transparent")
+        _mf.grid(row=r, column=1, sticky="ew", padx=(0, 14), pady=5)
+        _mf.grid_columnconfigure(0, weight=1)
+        _saved_model = e.get("LLM_MODEL", "llama3") or "llama3"
+        self.e_model = ctk.CTkComboBox(_mf, values=[_saved_model], width=300)
+        self.e_model.set(_saved_model)
+        self.e_model.grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(
+            _mf, text="Refresh", width=74,
+            command=self._fetch_models,
+        ).grid(row=0, column=1, padx=(6, 0))
+        r += 1
 
         # ── Piper TTS ─────────────────────────────────────────────────────────
         # Auto-detect the bundled piper binary when no .env entry exists yet
@@ -1378,6 +1391,41 @@ class TwitchBotApp(ctk.CTk):
     # ══════════════════════════════════════════════════════════════════════════
     # Utilities
     # ══════════════════════════════════════════════════════════════════════════
+
+    def _fetch_models(self) -> None:
+        import urllib.parse
+        endpoint = self.e_endpoint.get().strip()
+        if not endpoint:
+            return
+        parsed = urllib.parse.urlparse(endpoint)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+
+        def _worker() -> None:
+            models: list[str] = []
+            for url, key, sub in [
+                (f"{base}/v1/models", "data",   "id"),
+                (f"{base}/api/tags",  "models", "name"),
+            ]:
+                try:
+                    resp = requests.get(url, timeout=5)
+                    resp.raise_for_status()
+                    models = [item[sub] for item in resp.json().get(key, []) if sub in item]
+                    if models:
+                        break
+                except Exception:
+                    continue
+            if models:
+                self.after(0, lambda m=models: self._apply_model_list(m))
+            else:
+                self._log("[AI] Could not fetch model list — check the endpoint URL.")
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apply_model_list(self, models: list[str]) -> None:
+        current = self.e_model.get()
+        self.e_model.configure(values=models)
+        self.e_model.set(current if current in models else models[0])
+        self._log(f"[AI] Loaded {len(models)} model(s) from endpoint.")
 
     @staticmethod
     def _browse(entry: ctk.CTkEntry) -> None:
