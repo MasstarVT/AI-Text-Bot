@@ -52,7 +52,22 @@ Connection fields (channel, username, token, LLM endpoint/model, Piper paths) ar
 
 `.env` is in `.gitignore` — credentials are never committed.
 
-`.env` key names: `TWITCH_CHANNEL`, `TWITCH_USERNAME`, `TWITCH_TOKEN`, `LLM_ENDPOINT`, `LLM_MODEL`, `PIPER_EXE`, `PIPER_MODEL`, `PIPER_CONFIG`.
+`.env` key names: `TWITCH_CHANNEL`, `TWITCH_USERNAME`, `TWITCH_TOKEN`, `LLM_PROVIDER`, `LLM_ENDPOINT`, `LLM_MODEL`, `LLM_API_KEY`, `PIPER_EXE`, `PIPER_MODEL`, `PIPER_CONFIG`.
+
+## AI providers
+
+Six providers are supported, selected via the **Provider** dropdown in Connection Settings:
+
+| Provider | Format | Auth |
+|---|---|---|
+| Ollama | OpenAI-compatible | none |
+| LM Studio | OpenAI-compatible | none |
+| OpenAI | OpenAI | Bearer API key |
+| Grok (xAI) | OpenAI-compatible | Bearer API key |
+| Gemini | OpenAI-compatible (v1beta) | Bearer API key |
+| Claude | Anthropic Messages API | `x-api-key` header |
+
+Changing provider auto-fills the endpoint and calls Refresh on the model dropdown. Claude uses a hardcoded model list (`_CLAUDE_MODELS`); all others hit the provider's `/v1/models` (or `/api/tags` for Ollama native) endpoint. The request format branches in `AIResponseHandler._query` on `_PROVIDERS[provider]["fmt"]`.
 
 ## UI layout
 

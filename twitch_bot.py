@@ -78,6 +78,26 @@ _RED   = ("#c0392b", "#922b21")
 ON_FG  = "#2ecc71"
 OFF_FG = "#e74c3c"
 
+# ── AI provider definitions ───────────────────────────────────────────────────
+_PROVIDERS: dict[str, dict] = {
+    "Ollama":    {"endpoint": "http://localhost:11434/v1/chat/completions", "needs_key": False, "fmt": "openai"},
+    "LM Studio": {"endpoint": "http://localhost:1234/v1/chat/completions",  "needs_key": False, "fmt": "openai"},
+    "OpenAI":    {"endpoint": "https://api.openai.com/v1/chat/completions", "needs_key": True,  "fmt": "openai"},
+    "Grok":      {"endpoint": "https://api.x.ai/v1/chat/completions",       "needs_key": True,  "fmt": "openai"},
+    "Gemini":    {"endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                  "needs_key": True, "fmt": "openai"},
+    "Claude":    {"endpoint": "https://api.anthropic.com/v1/messages",      "needs_key": True,  "fmt": "anthropic"},
+}
+
+_CLAUDE_MODELS = [
+    "claude-opus-4-8",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5-20251001",
+    "claude-3-5-sonnet-20241022",
+    "claude-3-5-haiku-20241022",
+    "claude-3-opus-20240229",
+]
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # GameInputController
@@ -314,11 +334,36 @@ class AIResponseHandler:
 
     def _query(self, username: str, message: str) -> None:
         cfg           = self.get_config()
+        provider      = cfg.get("provider", "Ollama")
         endpoint      = cfg.get("endpoint")      or "http://localhost:11434/v1/chat/completions"
         model         = cfg.get("model")         or "llama3"
+        api_key       = cfg.get("api_key",  "")
         system_prompt = cfg.get("system_prompt") or "You are a helpful Twitch chat bot."
         use_tts       = cfg.get("tts_ai", True)
+        fmt           = _PROVIDERS.get(provider, {}).get("fmt", "openai")
 
+        try:
+            if fmt == "anthropic":
+                reply = self._query_anthropic(endpoint, model, api_key, system_prompt, username, message)
+            else:
+                reply = self._query_openai(endpoint, model, api_key, system_prompt, username, message)
+
+            if not reply:
+                self.log("[AI] Model returned an empty response.")
+                return
+            self.log(f"[AI] → {reply}")
+            if use_tts:
+                self.tts.speak(reply)
+        except requests.exceptions.ConnectionError:
+            self.log("[AI] Cannot reach AI server — check your endpoint and internet connection.")
+        except requests.exceptions.Timeout:
+            self.log("[AI] AI request timed out (>90 s).")
+        except Exception as exc:
+            self.log(f"[AI] Error: {exc}")
+
+    def _query_openai(self, endpoint: str, model: str, api_key: str,
+                      system_prompt: str, username: str, message: str) -> str:
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         payload = {
             "model": model,
             "messages": [
@@ -328,34 +373,33 @@ class AIResponseHandler:
             "stream": False,
             "max_tokens": 1500,
         }
+        resp = requests.post(endpoint, headers=headers, json=payload, timeout=90)
+        resp.raise_for_status()
+        data   = resp.json()
+        msg    = data["choices"][0]["message"]
+        reply  = (msg.get("content") or "").strip()
+        if not reply:
+            finish = data["choices"][0].get("finish_reason", "")
+            if finish == "length":
+                self.log("[AI] Ran out of tokens mid-think — try a shorter system prompt or a non-reasoning model.")
+        return reply
 
-        try:
-            resp = requests.post(endpoint, json=payload, timeout=90)
-            resp.raise_for_status()
-            data  = resp.json()
-            msg   = data["choices"][0]["message"]
-            reply = (msg.get("content") or "").strip()
-
-            # Reasoning model ran out of tokens before writing content —
-            # never dump the raw thinking chain to TTS, just skip it.
-            if not reply:
-                finish = data["choices"][0].get("finish_reason", "")
-                if finish == "length":
-                    self.log("[AI] Ran out of tokens mid-think — try a shorter system prompt or a non-reasoning model.")
-                else:
-                    self.log("[AI] Model returned an empty response.")
-                return
-            self.log(f"[AI] → {reply}")
-            if use_tts:
-                self.tts.speak(reply)
-        except requests.exceptions.ConnectionError:
-            self.log("[AI] Cannot reach LLM server — is Ollama / LM Studio running?")
-        except requests.exceptions.Timeout:
-            self.log("[AI] LLM request timed out (>30 s).")
-        except (KeyError, IndexError):
-            self.log("[AI] Unexpected response format from LLM.")
-        except Exception as exc:
-            self.log(f"[AI] Error: {exc}")
+    def _query_anthropic(self, endpoint: str, model: str, api_key: str,
+                         system_prompt: str, username: str, message: str) -> str:
+        headers = {
+            "x-api-key":         api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type":      "application/json",
+        }
+        payload = {
+            "model":      model,
+            "max_tokens": 1500,
+            "system":     system_prompt,
+            "messages":   [{"role": "user", "content": f"{username}: {message}"}],
+        }
+        resp = requests.post(endpoint, headers=headers, json=payload, timeout=90)
+        resp.raise_for_status()
+        return resp.json()["content"][0]["text"].strip()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -655,13 +699,41 @@ class TwitchBotApp(ctk.CTk):
               default=e.get("TWITCH_TOKEN", ""),
               placeholder="oauth:xxxxxxxxxxxxxxxx", secret=True)
 
-        # ── Local LLM ─────────────────────────────────────────────────────────
-        section("Local LLM  (Ollama / LM Studio)")
+        # ── AI Provider ───────────────────────────────────────────────────────
+        section("AI Provider")
+
+        # Provider selector
+        _saved_provider = e.get("LLM_PROVIDER", "Ollama")
+        if _saved_provider not in _PROVIDERS:
+            _saved_provider = "Ollama"
+        ctk.CTkLabel(tab, text="Provider", anchor="e").grid(
+            row=r, column=0, sticky="e", padx=(14, 8), pady=5)
+        self._provider_combo = ctk.CTkComboBox(
+            tab, values=list(_PROVIDERS.keys()), width=200,
+            command=self._on_provider_change,
+        )
+        self._provider_combo.set(_saved_provider)
+        self._provider_combo.grid(row=r, column=1, sticky="w", padx=(0, 14), pady=5)
+        r += 1
+
+        # API Key (hidden for local providers)
+        self._api_key_lbl = ctk.CTkLabel(tab, text="API Key", anchor="e")
+        self._api_key_lbl.grid(row=r, column=0, sticky="e", padx=(14, 8), pady=5)
+        self.e_api_key = ctk.CTkEntry(tab, width=450, show="●",
+                                      placeholder_text="sk-... / AIza... / xai-...")
+        if e.get("LLM_API_KEY"):
+            self.e_api_key.insert(0, e["LLM_API_KEY"])
+        self.e_api_key.grid(row=r, column=1, sticky="ew", padx=(0, 14), pady=5)
+        self._api_key_row = r
+        r += 1
+
+        # Endpoint
         field(
             "API Endpoint", "e_endpoint",
             default=e.get("LLM_ENDPOINT", "http://localhost:11434/v1/chat/completions"),
             placeholder="http://localhost:11434/v1/chat/completions",
         )
+
         # Model — combo populated by _fetch_models()
         ctk.CTkLabel(tab, text="Model Name", anchor="e").grid(
             row=r, column=0, sticky="e", padx=(14, 8), pady=5)
@@ -677,6 +749,9 @@ class TwitchBotApp(ctk.CTk):
             command=self._fetch_models,
         ).grid(row=0, column=1, padx=(6, 0))
         r += 1
+
+        # Apply initial show/hide for API key based on saved provider
+        self._set_api_key_visibility(_PROVIDERS[_saved_provider]["needs_key"])
 
         # ── Piper TTS ─────────────────────────────────────────────────────────
         # Auto-detect the bundled piper binary when no .env entry exists yet
@@ -1035,8 +1110,10 @@ class TwitchBotApp(ctk.CTk):
 
     def _get_ai_cfg(self) -> dict:
         return {
+            "provider":      self._provider_combo.get(),
             "endpoint":      self.e_endpoint.get().strip(),
             "model":         self.e_model.get().strip(),
+            "api_key":       self.e_api_key.get().strip(),
             "system_prompt": self._system_prompt.get("1.0", "end-1c"),
             "tts_ai":        self._var_tts_ai.get(),
         }
@@ -1355,8 +1432,10 @@ class TwitchBotApp(ctk.CTk):
             f"TWITCH_USERNAME={self.e_username.get().strip()}",
             f"TWITCH_CLIENT_ID={self.e_client_id.get().strip()}",
             f"TWITCH_TOKEN={self.e_token.get().strip()}",
+            f"LLM_PROVIDER={self._provider_combo.get()}",
             f"LLM_ENDPOINT={self.e_endpoint.get().strip()}",
             f"LLM_MODEL={self.e_model.get().strip()}",
+            f"LLM_API_KEY={self.e_api_key.get().strip()}",
             f"PIPER_EXE={self.e_piper_exe.get().strip()}",
             f"PIPER_MODEL={self.e_piper_model.get().strip()}",
             f"PIPER_CONFIG={self.e_piper_cfg.get().strip()}",
@@ -1444,32 +1523,81 @@ class TwitchBotApp(ctk.CTk):
     # Utilities
     # ══════════════════════════════════════════════════════════════════════════
 
+    def _on_provider_change(self, provider: str) -> None:
+        info = _PROVIDERS.get(provider, _PROVIDERS["Ollama"])
+        self._set_api_key_visibility(info["needs_key"])
+        self.e_endpoint.delete(0, "end")
+        self.e_endpoint.insert(0, info["endpoint"])
+        self._fetch_models()
+
+    def _set_api_key_visibility(self, visible: bool) -> None:
+        if visible:
+            self._api_key_lbl.grid()
+            self.e_api_key.grid()
+        else:
+            self._api_key_lbl.grid_remove()
+            self.e_api_key.grid_remove()
+
     def _fetch_models(self) -> None:
         import urllib.parse
+        provider = self._provider_combo.get()
+        api_key  = self.e_api_key.get().strip()
+
+        # Claude: hardcoded list, no network call needed
+        if provider == "Claude":
+            self.after(0, lambda: self._apply_model_list(_CLAUDE_MODELS))
+            return
+
         endpoint = self.e_endpoint.get().strip()
         if not endpoint:
             return
         parsed = urllib.parse.urlparse(endpoint)
-        base = f"{parsed.scheme}://{parsed.netloc}"
+        base   = f"{parsed.scheme}://{parsed.netloc}"
 
         def _worker() -> None:
             models: list[str] = []
-            for url, key, sub in [
-                (f"{base}/v1/models", "data",   "id"),
-                (f"{base}/api/tags",  "models", "name"),
-            ]:
+
+            if provider == "Gemini":
                 try:
-                    resp = requests.get(url, timeout=5)
+                    url  = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+                    resp = requests.get(url, timeout=10)
                     resp.raise_for_status()
-                    models = [item[sub] for item in resp.json().get(key, []) if sub in item]
-                    if models:
-                        break
+                    raw = resp.json().get("models", [])
+                    models = [
+                        m["name"].removeprefix("models/")
+                        for m in raw
+                        if "generateContent" in m.get("supportedGenerationMethods", [])
+                    ]
                 except Exception:
-                    continue
+                    pass
+            elif provider in ("OpenAI", "Grok"):
+                try:
+                    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+                    resp    = requests.get(f"{base}/v1/models", headers=headers, timeout=10)
+                    resp.raise_for_status()
+                    models  = [item["id"] for item in resp.json().get("data", [])]
+                    models.sort()
+                except Exception:
+                    pass
+            else:
+                # Ollama / LM Studio — try OpenAI list then Ollama native
+                for url, key, sub in [
+                    (f"{base}/v1/models", "data",   "id"),
+                    (f"{base}/api/tags",  "models", "name"),
+                ]:
+                    try:
+                        resp = requests.get(url, timeout=5)
+                        resp.raise_for_status()
+                        models = [item[sub] for item in resp.json().get(key, []) if sub in item]
+                        if models:
+                            break
+                    except Exception:
+                        continue
+
             if models:
                 self.after(0, lambda m=models: self._apply_model_list(m))
             else:
-                self._log("[AI] Could not fetch model list — check the endpoint URL.")
+                self._log("[AI] Could not fetch model list — check endpoint and API key.")
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -1477,7 +1605,7 @@ class TwitchBotApp(ctk.CTk):
         current = self.e_model.get()
         self.e_model.configure(values=models)
         self.e_model.set(current if current in models else models[0])
-        self._log(f"[AI] Loaded {len(models)} model(s) from endpoint.")
+        self._log(f"[AI] Loaded {len(models)} model(s).")
 
     @staticmethod
     def _browse(entry: ctk.CTkEntry) -> None:
