@@ -188,12 +188,11 @@ class TTSEngine:
                 pygame.mixer.stop()
             except Exception:
                 pass
-        # Kill any running system-player subprocess
+        # Kill any running subprocess (Piper synthesis or system audio player)
         with self._proc_lock:
             if self._current_proc and self._current_proc.poll() is None:
                 self._current_proc.kill()
                 self._current_proc = None
-        self._stop_event.clear()
 
     # ── worker ───────────────────────────────────────────────────────────────
 
@@ -202,6 +201,7 @@ class TTSEngine:
             item = self._q.get()
             if item is None:
                 break
+            self._stop_event.clear()  # reset panic flag only when a new item starts
             self._synthesize(item)
 
     def _synthesize(self, text: str) -> None:
@@ -219,19 +219,45 @@ class TTSEngine:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 tmp_path = f.name
 
+            if self._stop_event.is_set():
+                return
+
             cmd = [piper_exe, "--model", model_path, "--output_file", tmp_path]
             if cfg_path:
                 cmd += ["--config", cfg_path]
 
-            result = subprocess.run(
-                cmd,
-                input=text.encode("utf-8"),
-                capture_output=True,
-                timeout=30,
-            )
-            if result.returncode != 0:
-                err = result.stderr.decode("utf-8", errors="replace").strip()
+            with self._proc_lock:
+                if self._stop_event.is_set():
+                    return
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                )
+                self._current_proc = proc
+
+            try:
+                _, stderr_bytes = proc.communicate(input=text.encode("utf-8"), timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                self.log("[TTS] Piper synthesis timed out.")
+                return
+            finally:
+                with self._proc_lock:
+                    if self._current_proc is proc:
+                        self._current_proc = None
+
+            if self._stop_event.is_set():
+                return
+
+            if proc.returncode not in (0, -9):  # -9 = killed by panic
+                err = stderr_bytes.decode("utf-8", errors="replace").strip()
                 self.log(f"[TTS] Piper error: {err}")
+                return
+
+            if proc.returncode == -9:
                 return
 
             self._play(tmp_path)
