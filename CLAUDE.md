@@ -3,11 +3,14 @@
 ## Running the project
 
 ```bash
-# Existing venv already has all deps:
-DISPLAY=:0 .venv/bin/python twitch_bot.py
+# Start the web server (headless — no display required):
+.venv/bin/python twitch_bot.py
 ```
 
-The app requires a display (`DISPLAY=:0` on Linux). All dependencies are installed in `.venv/`.
+Flask binds to `0.0.0.0` on port 5000 by default.
+Access the UI at `http://<server-ip>:5000` from any device on the network.
+
+Set `WEB_PORT=<port>` in `.env` to change the port.
 
 ## Architecture
 
@@ -15,7 +18,7 @@ Single file: `twitch_bot.py`. Five classes plus the app window:
 
 | Class | Responsibility |
 |---|---|
-| `TwitchBotApp` | Main CTk window — UI construction, service lifecycle, message routing |
+| `WebApp`             | Flask web server, service lifecycle, API routes, SSE log broadcast |
 | `TwitchIRCClient` | Raw TCP socket to `irc.chat.twitch.tv:6667`, PING/PONG, PRIVMSG parsing |
 | `AIResponseHandler` | Queue-backed worker; POSTs to local LLM (OpenAI-compatible endpoint) |
 | `TTSEngine` | Queue-backed worker; runs Piper subprocess, plays WAV via pygame |
@@ -101,6 +104,7 @@ Connection fields are saved to `.env` next to the script whenever the user click
 - LLM: `LLM_PROVIDER`, `LLM_ENDPOINT`, `LLM_MODEL`, `LLM_API_KEY`
 - Piper: `PIPER_EXE`, `PIPER_MODEL`, `PIPER_CONFIG`
 - Discord: `DISCORD_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_TRIGGER`, `DISCORD_USE_SHARED_PROMPT`, `DISCORD_PROMPT`
+- Web server: `WEB_PORT`
 
 ## AI providers
 
