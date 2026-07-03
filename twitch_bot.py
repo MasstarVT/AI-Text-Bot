@@ -28,6 +28,7 @@ Cross-thread communication:
 from __future__ import annotations
 
 import asyncio
+import base64
 import collections
 import json
 import os
@@ -155,9 +156,10 @@ class TTSEngine:
     GUI thread) until playback finishes, then delete the temp file.
     """
 
-    def __init__(self, get_config, log) -> None:
+    def __init__(self, get_config, log, on_audio=None) -> None:
         self.get_config = get_config   # callable → dict(piper_exe, model_path, config_path)
         self.log = log
+        self.on_audio = on_audio          # callable(wav_b64: str) | None
         self._q: queue.Queue[str | None] = queue.Queue()
         self._stop_event = threading.Event()
         self._current_proc: subprocess.Popen | None = None
@@ -271,7 +273,10 @@ class TTSEngine:
                 self.log(f"[TTS] Piper error: {err}")
                 return
 
-            self._play(tmp_path)
+            if self.on_audio and not self._stop_event.is_set():
+                with open(tmp_path, "rb") as _f:
+                    wav_b64 = base64.b64encode(_f.read()).decode("ascii")
+                self.on_audio(wav_b64)
 
         except FileNotFoundError:
             self.log(f"[TTS] Piper executable not found: '{piper_exe}'")
@@ -284,55 +289,6 @@ class TTSEngine:
                 except OSError:
                     pass
 
-    # System audio players tried in order when pygame.mixer is unavailable
-    _SYSTEM_PLAYERS = ("pw-play", "paplay", "aplay", "ffplay", "mpv")
-
-    def _play(self, wav_path: str) -> None:
-        if self._stop_event.is_set():
-            return
-
-        if HAS_PYGAME:
-            try:
-                sound   = pygame.mixer.Sound(wav_path)
-                channel = sound.play()
-                while channel and channel.get_busy():
-                    if self._stop_event.is_set():
-                        channel.stop()
-                        return
-                    time.sleep(0.05)
-                return
-            except Exception as exc:
-                self.log(f"[TTS] pygame error: {exc}")
-
-        # pygame.mixer unavailable or failed — try system audio players
-        for player in self._SYSTEM_PLAYERS:
-            try:
-                with self._proc_lock:
-                    if self._stop_event.is_set():
-                        return
-                    proc = subprocess.Popen(
-                        [player, wav_path],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                    self._current_proc = proc
-                try:
-                    proc.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    self.log(f"[TTS] {player} timed out.")
-                finally:
-                    with self._proc_lock:
-                        if self._current_proc is proc:
-                            self._current_proc = None
-                if proc.returncode == 0 or self._stop_event.is_set():
-                    return
-            except FileNotFoundError:
-                continue
-            except Exception as exc:
-                self.log(f"[TTS] {player} error: {exc}")
-
-        self.log("[TTS] No working audio player found.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
