@@ -353,11 +353,11 @@ class AIResponseHandler:
         self.get_config = get_config   # callable → dict(endpoint, model, system_prompt, tts_ai)
         self.log = log
         self.tts = tts
-        self._q: queue.Queue[tuple[str, str] | None] = queue.Queue()
+        self._q: queue.Queue[tuple | None] = queue.Queue()
         threading.Thread(target=self._worker, name="AI-Worker", daemon=True).start()
 
-    def handle(self, username: str, message: str) -> None:
-        self._q.put((username, message))
+    def handle(self, username: str, message: str, reply_cb=None, prompt_override: str | None = None) -> None:
+        self._q.put((username, message, reply_cb, prompt_override))
 
     def stop(self) -> None:
         self._q.put(None)
@@ -369,15 +369,16 @@ class AIResponseHandler:
             item = self._q.get()
             if item is None:
                 break
-            self._query(*item)
+            username, message, reply_cb, prompt_override = item
+            self._query(username, message, reply_cb=reply_cb, prompt_override=prompt_override)
 
-    def _query(self, username: str, message: str) -> None:
+    def _query(self, username: str, message: str, reply_cb=None, prompt_override: str | None = None) -> None:
         cfg           = self.get_config()
         provider      = cfg.get("provider", "Ollama")
         endpoint      = cfg.get("endpoint")      or "http://localhost:11434/v1/chat/completions"
         model         = cfg.get("model")         or "llama3"
         api_key       = cfg.get("api_key",  "")
-        system_prompt = cfg.get("system_prompt") or "You are a helpful Twitch chat bot."
+        system_prompt = prompt_override or cfg.get("system_prompt") or "You are a helpful Twitch chat bot."
         use_tts       = cfg.get("tts_ai", True)
         fmt           = _PROVIDERS.get(provider, {}).get("fmt", "openai")
 
@@ -393,6 +394,11 @@ class AIResponseHandler:
             self.log(f"[AI] → {reply}")
             if use_tts:
                 self.tts.speak(reply)
+            if reply_cb is not None:
+                try:
+                    reply_cb(reply)
+                except Exception as exc:
+                    self.log(f"[AI] reply_cb error: {exc}")
         except requests.exceptions.ConnectionError:
             self.log("[AI] Cannot reach AI server — check your endpoint and internet connection.")
         except requests.exceptions.Timeout:
