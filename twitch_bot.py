@@ -463,12 +463,14 @@ class TwitchIRCClient:
     Parses PRIVMSG lines and calls on_message(username, text) for each chat message.
     """
 
-    def __init__(self, get_creds, log, on_message) -> None:
+    def __init__(self, get_creds, log, on_message, on_ready=None) -> None:
         self.get_creds  = get_creds       # callable → dict(channel, username, token)
         self.log        = log
         self.on_message = on_message      # callback(username: str, message: str)
+        self.on_ready   = on_ready        # called once when JOIN is confirmed
         self._sock: socket.socket | None = None
         self._running = False
+        self._ready_fired = False
 
     def connect(self) -> None:
         self._running = True
@@ -504,6 +506,7 @@ class TwitchIRCClient:
                     time.sleep(RECONNECT_DELAY)
 
     def _session(self) -> None:
+        self._ready_fired = False
         creds   = self.get_creds()
         channel = creds.get("channel",  "").lower().strip()
         user    = creds.get("username", "").lower().strip()
@@ -562,6 +565,11 @@ class TwitchIRCClient:
             for pair in tag_str.split(";"):
                 k, _, v = pair.partition("=")
                 tags[k] = v
+
+        if not self._ready_fired and " JOIN #" in line:
+            self._ready_fired = True
+            if self.on_ready:
+                self.on_ready()
 
         m = re.search(r":(\w+)!\w+@\S+\.tmi\.twitch\.tv PRIVMSG #\S+ :(.+)", line)
         if m:
@@ -1434,6 +1442,7 @@ class WebApp:
             get_creds=self._get_irc_creds,
             log=self._log,
             on_message=self._dispatch,
+            on_ready=self._on_irc_ready,
         )
         self._irc.connect()
         self._log("[System] Connecting to Twitch IRC…")
@@ -1447,6 +1456,11 @@ class WebApp:
             self._config["twitch_status"] = "off"
         self._broadcast_status()
         self._log("[System] Disconnected.")
+
+    def _on_irc_ready(self) -> None:
+        with self._config_lock:
+            self._config["twitch_status"] = "online"
+        self._broadcast_status()
 
     def _discord_connect(self) -> None:
         if self._discord:
@@ -1506,15 +1520,6 @@ class WebApp:
             self._log(f"[Chat] Reward ID: {reward_id}")
         self._route_plays(username, message)
         self._route_ai(username, message, bits, reward_id)
-        # Mark Twitch as online on first message
-        with self._config_lock:
-            if self._config["twitch_status"] != "online":
-                self._config["twitch_status"] = "online"
-                do_broadcast = True
-            else:
-                do_broadcast = False
-        if do_broadcast:
-            self._broadcast_status()
 
     def _route_plays(self, username: str, message: str) -> None:
         with self._config_lock:
