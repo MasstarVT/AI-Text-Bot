@@ -392,6 +392,28 @@ function toggleVis(input) {
   input.type = input.type === 'password' ? 'text' : 'password';
 }
 
+// ── TTS browser audio ─────────────────────────────────────────────────────
+const _ttsQueue = [];
+let _ttsActive = null;
+
+function _ttsEnqueue(wav_b64) {
+  _ttsQueue.push(wav_b64);
+  if (!_ttsActive) _ttsPlayNext();
+}
+
+function _ttsPlayNext() {
+  if (!_ttsQueue.length) { _ttsActive = null; return; }
+  const b64 = _ttsQueue.shift();
+  _ttsActive = new Audio('data:audio/wav;base64,' + b64);
+  _ttsActive.onended = _ttsPlayNext;
+  _ttsActive.play().catch(_ttsPlayNext);
+}
+
+function _ttsPanic() {
+  _ttsQueue.length = 0;
+  if (_ttsActive) { _ttsActive.pause(); _ttsActive = null; }
+}
+
 // ── SSE stream ────────────────────────────────────────────────────────────
 function startSSE() {
   const es = new EventSource('/stream');
@@ -400,6 +422,8 @@ function startSSE() {
     const s = JSON.parse(e.data);
     applyStatus(s.twitch_status, s.discord_status);
   });
+  es.addEventListener('tts',       e => _ttsEnqueue(JSON.parse(e.data).wav));
+  es.addEventListener('tts-panic', () => _ttsPanic());
   es.onerror = () => { es.close(); setTimeout(startSSE, 3000); };
 }
 
