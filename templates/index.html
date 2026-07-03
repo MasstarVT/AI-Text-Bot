@@ -400,7 +400,7 @@ function startSSE() {
     const s = JSON.parse(e.data);
     applyStatus(s.twitch_status, s.discord_status);
   });
-  es.onerror = () => setTimeout(startSSE, 3000);
+  es.onerror = () => { es.close(); setTimeout(startSSE, 3000); };
 }
 
 function applyStatus(twitch, discord) {
@@ -527,16 +527,33 @@ function renderCommands(map) {
   box.innerHTML = '';
   const keys = Object.keys(map).sort();
   if (!keys.length) {
-    box.innerHTML = '<div id="no-cmds">No mappings yet. Add one above.</div>';
+    const msg = document.createElement('div');
+    msg.id = 'no-cmds';
+    msg.textContent = 'No mappings yet. Add one above.';
+    box.appendChild(msg);
     return;
   }
   keys.forEach(cmd => {
     const info = map[cmd];
     const row = document.createElement('div');
     row.className = 'cmd-row';
-    row.innerHTML = `<span class="cmd-name">${cmd}</span>
-      <span class="cmd-info">→ press <b>'${info.key}'</b> for ${info.duration}s</span>
-      <button class="btn btn-red btn-sm" onclick="removeCommand('${cmd}')">Remove</button>`;
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'cmd-name';
+    nameSpan.textContent = cmd;
+
+    const infoSpan = document.createElement('span');
+    infoSpan.className = 'cmd-info';
+    infoSpan.textContent = `→ press '${info.key}' for ${info.duration}s`;
+
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-red btn-sm';
+    btn.textContent = 'Remove';
+    btn.addEventListener('click', () => removeCommand(cmd));
+
+    row.appendChild(nameSpan);
+    row.appendChild(infoSpan);
+    row.appendChild(btn);
     box.appendChild(row);
   });
 }
@@ -661,7 +678,11 @@ function openSettings() {
     }
     // populate model dropdown with current model
     const sel = el('s-model');
-    sel.innerHTML = `<option value="${s.llm_model||''}">${s.llm_model||'—'}</option>`;
+    sel.innerHTML = '';
+    const opt = document.createElement('option');
+    opt.value = s.llm_model || '';
+    opt.textContent = s.llm_model || '—';
+    sel.appendChild(opt);
   });
   el('settings-modal').classList.add('open');
 }
@@ -799,7 +820,13 @@ function browseTo(path) {
     r.dirs.forEach(d => {
       const row = document.createElement('div');
       row.className = 'fb-entry';
-      row.innerHTML = `<span class="fb-icon">📁</span><span>${d}</span>`;
+      const icon = document.createElement('span');
+      icon.className = 'fb-icon';
+      icon.textContent = '📁';
+      const name = document.createElement('span');
+      name.textContent = d;
+      row.appendChild(icon);
+      row.appendChild(name);
       row.onclick = () => browseTo(r.path + '/' + d);
       list.appendChild(row);
     });
@@ -808,7 +835,13 @@ function browseTo(path) {
     r.files.forEach(f => {
       const row = document.createElement('div');
       row.className = 'fb-entry';
-      row.innerHTML = `<span class="fb-icon">📄</span><span>${f}</span>`;
+      const icon = document.createElement('span');
+      icon.className = 'fb-icon';
+      icon.textContent = '📄';
+      const name = document.createElement('span');
+      name.textContent = f;
+      row.appendChild(icon);
+      row.appendChild(name);
       row.onclick = () => {
         if (_fbTarget) el(_fbTarget).value = r.path + '/' + f;
         closeBrowser();
