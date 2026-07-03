@@ -574,6 +574,148 @@ class TwitchIRCClient:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# DiscordClient
+# ══════════════════════════════════════════════════════════════════════════════
+class DiscordClient:
+    """
+    Discord bot integration using discord.py.
+
+    Runs a discord.Client on a dedicated daemon thread with its own asyncio
+    event loop.  Filters incoming messages by trigger mode, then routes them
+    through the shared AIResponseHandler with a reply_cb that posts the AI
+    reply back to the originating Discord channel.
+
+    reply_cb is invoked from the AI worker thread — must not make GUI/CTk calls.
+    """
+
+    TRIGGER_MODES = [
+        "All messages",
+        "@mention only",
+        "@mention + replies",
+        "All messages + mentions + replies",
+    ]
+
+    def __init__(self, get_config, log, ai_handler: "AIResponseHandler", on_ready_cb=None) -> None:
+        self.get_config = get_config  # callable → dict(discord_token, discord_channel_id, discord_trigger, discord_prompt)
+        self.log = log
+        self._ai = ai_handler
+        self._on_ready_cb = on_ready_cb  # callable() — called when bot connects; safe to use self.after(0, ...) inside
+        self._bot = None
+        self._loop = None
+        self._thread: threading.Thread | None = None
+        self._running = False
+
+    def connect(self) -> None:
+        self._running = True
+        self._thread = threading.Thread(target=self._run, name="Discord-Worker", daemon=True)
+        self._thread.start()
+
+    def disconnect(self) -> None:
+        self._running = False
+        if self._loop and self._bot:
+            try:
+                asyncio.run_coroutine_threadsafe(self._bot.close(), self._loop).result(timeout=5)
+            except Exception:
+                pass
+        self._bot = None
+        self._loop = None
+
+    # ── internal ──────────────────────────────────────────────────────────────
+
+    def _run(self) -> None:
+        try:
+            import discord
+        except ImportError:
+            self.log("[Discord] discord.py not installed — run: pip install discord.py")
+            self._running = False
+            return
+
+        cfg = self.get_config()
+        token = cfg.get("discord_token", "").strip()
+        if not token:
+            self.log("[Discord] No bot token configured — enter one in Connection Settings.")
+            self._running = False
+            return
+
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+
+        intents = discord.Intents.default()
+        intents.message_content = True
+        self._bot = discord.Client(intents=intents)
+
+        bot = self._bot
+        loop = self._loop
+        ai = self._ai
+        get_config = self.get_config
+        log = self.log
+        on_ready_cb = self._on_ready_cb
+
+        @bot.event
+        async def on_ready():
+            log(f"[Discord] Connected as {bot.user} (ID: {bot.user.id})")
+            if on_ready_cb:
+                on_ready_cb()
+
+        @bot.event
+        async def on_message(message):
+            if message.author == bot.user:
+                return
+
+            cfg = get_config()
+            try:
+                channel_id = int(cfg.get("discord_channel_id", 0) or 0)
+            except ValueError:
+                return
+
+            if message.channel.id != channel_id:
+                return
+
+            trigger = cfg.get("discord_trigger", "All messages")
+            if not DiscordClient._is_triggered(trigger, bot.user, message):
+                return
+
+            discord_prompt = cfg.get("discord_prompt", "").strip() or None
+            log(f"[Discord] {message.author.name}: {message.content}")
+
+            channel = message.channel
+
+            def reply_cb(text: str) -> None:
+                asyncio.run_coroutine_threadsafe(channel.send(text), loop)
+
+            ai.handle(message.author.name, message.content,
+                      reply_cb=reply_cb, prompt_override=discord_prompt)
+
+        try:
+            self._loop.run_until_complete(bot.start(token))
+        except Exception as exc:
+            if self._running:
+                self.log(f"[Discord] Error: {exc}")
+        finally:
+            self._running = False
+            try:
+                self._loop.close()
+            except Exception:
+                pass
+
+    @staticmethod
+    def _is_triggered(trigger: str, bot_user, message) -> bool:
+        """Return True if the message meets the trigger-mode condition."""
+        if trigger in ("All messages", "All messages + mentions + replies"):
+            return True
+        if trigger == "@mention only":
+            return bot_user in message.mentions
+        if trigger == "@mention + replies":
+            is_mention = bot_user in message.mentions
+            is_reply = (
+                message.reference is not None
+                and getattr(getattr(message.reference, "resolved", None), "author", None) == bot_user
+            )
+            return is_mention or is_reply
+        return False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TwitchBotApp  (main window)
 # ══════════════════════════════════════════════════════════════════════════════
 class TwitchBotApp(ctk.CTk):
