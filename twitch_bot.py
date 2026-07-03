@@ -864,6 +864,13 @@ class WebApp:
             for q in list(self._sse_clients):
                 q.put(msg)
 
+    def _broadcast_tts_audio(self, wav_b64: str) -> None:
+        """Push a TTS audio clip to all SSE clients."""
+        msg = f"event: tts\ndata: {json.dumps({'wav': wav_b64})}\n\n"
+        with self._log_lock:
+            for q in list(self._sse_clients):
+                q.put(msg)
+
     # ══════════════════════════════════════════════════════════════════════════
     # Config getters — called on worker threads; snapshot under lock
     # ══════════════════════════════════════════════════════════════════════════
@@ -1361,7 +1368,11 @@ class WebApp:
             })
 
     def _start_services(self) -> None:
-        self._tts = TTSEngine(get_config=self._get_tts_cfg, log=self._log)
+        self._tts = TTSEngine(
+            get_config=self._get_tts_cfg,
+            log=self._log,
+            on_audio=self._broadcast_tts_audio,
+        )
         self._ai  = AIResponseHandler(
             get_config=self._get_ai_cfg,
             log=self._log,
