@@ -1004,6 +1004,7 @@ class WebApp:
     def _save_settings(self) -> None:
         with self._config_lock:
             c = dict(self._config)
+            c["command_map"] = dict(c["command_map"])
         data = {
             "ai_enabled":       c.get("ai_enabled",       False),
             "trigger_every_n":  c.get("trigger_every_n",  True),
@@ -1022,8 +1023,11 @@ class WebApp:
             json.dump(data, f, indent=2)
 
     def _autosave(self) -> None:
-        self._save_settings()
-        self._save_env()
+        try:
+            self._save_settings()
+            self._save_env()
+        except Exception as exc:
+            self._log(f"[System] Autosave failed: {exc}")
         t = threading.Timer(10, self._autosave)
         t.daemon = True
         t.start()
