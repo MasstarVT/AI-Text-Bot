@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Twitch Interactive Bot</title>
+<style>
+:root{
+  --bg:#111318;--surface:#1a1c24;--card:#1e2130;--border:#2d3148;
+  --accent:#3daee9;--green:#1a7f37;--green-h:#15662d;
+  --red:#c0392b;--red-h:#922b21;--orange:#f39c12;
+  --text:#dde1f0;--muted:#7a7f9a;--on:#2ecc71;--off:#e74c3c;
+  --font:system-ui,-apple-system,sans-serif;--mono:'Courier New',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── header ── */
+#header{background:var(--surface);border-bottom:1px solid var(--border);padding:0 12px;height:48px;display:flex;align-items:center;gap:8px;flex-shrink:0}
+#header h1{font-size:14px;font-weight:700;white-space:nowrap;margin-right:auto}
+.pill{font-size:12px;padding:2px 10px;border-radius:12px;white-space:nowrap}
+.pill.off{color:var(--off)}.pill.connecting{color:var(--orange)}.pill.online{color:var(--on)}.pill.error{color:var(--off)}
+
+/* ── buttons ── */
+.btn{border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:opacity .15s}
+.btn:disabled{opacity:.4;cursor:default}
+.btn-green{background:var(--green);color:#fff}.btn-green:hover:not(:disabled){background:var(--green-h)}
+.btn-red{background:var(--red);color:#fff}.btn-red:hover:not(:disabled){background:var(--red-h)}
+.btn-panic{background:#8b0000;color:#fff}.btn-panic:hover:not(:disabled){background:#b22222}
+.btn-neutral{background:var(--card);color:var(--text);border:1px solid var(--border)}.btn-neutral:hover:not(:disabled){background:var(--border)}
+.btn-sm{padding:3px 9px;font-size:12px}
+.btn-icon{background:transparent;border:1px solid var(--border);border-radius:6px;padding:4px 8px;cursor:pointer;color:var(--muted)}
+.btn-icon:hover{color:var(--text)}
+
+/* ── main layout ── */
+#main{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px;flex:1;min-height:0;overflow:hidden}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;overflow:hidden}
+
+/* ── panel header (toggle rows) ── */
+.panel-hdr{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
+.panel-hdr span{font-weight:700;font-size:13px}
+.status-badge{font-size:12px;font-weight:700}.status-badge.on{color:var(--on)}.status-badge.off{color:var(--off)}
+
+/* ── toggle switch ── */
+.toggle{position:relative;display:inline-block;width:40px;height:22px;flex-shrink:0}
+.toggle input{opacity:0;width:0;height:0}
+.slider{position:absolute;inset:0;background:#444;border-radius:22px;cursor:pointer;transition:.2s}
+.slider:before{content:"";position:absolute;width:16px;height:16px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s}
+input:checked+.slider{background:var(--green)}
+input:checked+.slider:before{transform:translateX(18px)}
+
+/* ── form controls ── */
+input[type=text],input[type=password],input[type=number],select,textarea{
+  background:var(--surface);border:1px solid var(--border);border-radius:5px;
+  color:var(--text);font-family:inherit;font-size:13px;padding:5px 8px;
+  outline:none;width:100%;
+}
+input[type=text]:focus,input[type=password]:focus,input[type=number]:focus,select:focus,textarea:focus{border-color:var(--accent)}
+input[type=number]{width:70px}
+textarea{resize:vertical;font-family:var(--mono)}
+.field-row{display:flex;align-items:center;gap:8px;padding:5px 0}
+.field-row label{min-width:130px;color:var(--muted);font-size:12px;text-align:right;flex-shrink:0}
+.field-with-btn{display:flex;gap:6px;flex:1}
+.field-with-btn input,.field-with-btn select{flex:1}
+.row-check{display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer}
+.hint{color:var(--muted);font-size:11px;padding:2px 0 6px}
+.warn{color:var(--orange);font-size:11px;padding:4px 0}
+.section-lbl{font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;padding:8px 0 4px}
+.divider{border-top:1px solid var(--border);margin:8px 0}
+
+/* ── plays panel ── */
+#plays-inner{flex:1;overflow-y:auto;padding:8px 14px}
+.preset-bar{display:flex;align-items:center;gap:6px;padding:6px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
+.preset-bar select{flex:1}
+.add-bar{display:flex;align-items:center;gap:6px;padding:6px 14px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.add-bar input{flex:1;min-width:60px}
+#add-dur{width:65px}
+.cmd-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;margin-bottom:4px}
+.cmd-row:nth-child(even){background:rgba(255,255,255,.03)}
+.cmd-name{font-family:var(--mono);color:var(--accent);font-weight:700;min-width:90px}
+.cmd-info{flex:1;color:var(--muted);font-size:12px}
+#no-cmds{color:var(--muted);font-size:13px;text-align:center;padding:20px}
+
+/* ── ai panel ── */
+#ai-inner{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#trig-box{padding:8px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
+#prompt-hdr{display:flex;align-items:center;gap:8px;padding:6px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
+#prompt-hdr .section-lbl{margin:0;flex:1}
+#prompt-hdr select{width:160px}
+#system-prompt{flex:1;resize:none;border:none;border-radius:0;background:var(--surface);padding:10px 14px;font-size:13px;font-family:var(--mono)}
+
+/* ── console ── */
+#console-bar{display:flex;align-items:center;gap:8px;padding:4px 12px;background:var(--surface);border-top:1px solid var(--border);border-bottom:1px solid var(--border);flex-shrink:0}
+#console-bar span{font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;flex:1}
+#console{flex:0 0 160px;overflow-y:auto;background:#0a0c10;padding:8px 12px;font-family:var(--mono);font-size:12px;color:#c0c8d8;line-height:1.5;flex-shrink:0}
+
+/* ── manual prompt bar ── */
+#manual-bar{display:flex;gap:6px;padding:6px 12px;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0}
+#manual-input{flex:1}
+
+/* ── modal backdrop + box ── */
+.modal{display:none;position:fixed;inset:0;z-index:100}
+.modal.open{display:flex;align-items:center;justify-content:center}
+.modal-bg{position:absolute;inset:0;background:rgba(0,0,0,.6)}
+.modal-box{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:10px;width:560px;max-height:80vh;display:flex;flex-direction:column;z-index:1;overflow:hidden}
+.modal-hdr{display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);font-weight:700;font-size:14px}
+.modal-hdr .close{margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;padding:0 4px}
+.modal-hdr .close:hover{color:var(--text)}
+.modal-body{overflow-y:auto;padding:12px 16px;flex:1}
+.modal-ftr{padding:10px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+
+/* ── settings tabs ── */
+.tab-bar{display:flex;border-bottom:1px solid var(--border);padding:0 16px}
+.tab{background:none;border:none;padding:8px 14px;cursor:pointer;color:var(--muted);font-size:13px;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-pane{display:none}.tab-pane.active{display:block}
+
+/* ── file browser ── */
+.file-modal-box{width:480px}
+#fb-path{font-size:12px;color:var(--muted);padding:4px 0 8px;word-break:break-all}
+.fb-entry{display:flex;align-items:center;gap:6px;padding:5px 4px;border-radius:4px;cursor:pointer;font-size:13px}
+.fb-entry:hover{background:var(--border)}
+.fb-icon{font-size:14px;width:20px;text-align:center;flex-shrink:0}
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════ HEADER ════════════════════════════════ -->
+<header id="header">
+  <h1>Twitch Interactive Bot</h1>
+  <button class="btn btn-panic" onclick="api('/api/tts/panic','POST')">⏹ Panic</button>
+  <button id="btn-connect"    class="btn btn-green"   onclick="connectTwitch()">Connect</button>
+  <button id="btn-disconnect" class="btn btn-red"     onclick="api('/api/disconnect','POST').then(loadState)" disabled>Disconnect</button>
+  <span   id="twitch-status"  class="pill off">Twitch: ● Off</span>
+  <button id="btn-dc-connect"    class="btn btn-green"   onclick="connectDiscord()">Discord</button>
+  <button id="btn-dc-disconnect" class="btn btn-red"     onclick="api('/api/discord/disconnect','POST').then(loadState)" disabled>Discord Off</button>
+  <span   id="discord-status"    class="pill off">Discord: ● Off</span>
+  <button class="btn-icon" onclick="openSettings()" title="Settings">⚙</button>
+</header>
+
+<!-- ════════════════════════════════ MAIN ═════════════════════════════════ -->
+<div id="main">
+
+  <!-- ─── TWITCH PLAYS ─── -->
+  <div class="card">
+    <div class="panel-hdr">
+      <span>Game Inputs Active</span>
+      <label class="toggle" title="Toggle game input">
+        <input type="checkbox" id="plays-toggle" onchange="togglePlays()">
+        <span class="slider"></span>
+      </label>
+      <span id="plays-badge" class="status-badge off">OFF</span>
+    </div>
+
+    <!-- preset bar -->
+    <div class="preset-bar">
+      <label style="color:var(--muted);font-size:12px;white-space:nowrap">Preset:</label>
+      <select id="preset-select" onchange="loadPreset(this.value)"></select>
+      <button class="btn btn-neutral btn-sm" onclick="savePreset()">Save</button>
+    </div>
+
+    <!-- add command -->
+    <div class="add-bar">
+      <input id="add-cmd" type="text" placeholder="!jump" style="width:90px">
+      <input id="add-key" type="text" placeholder="space" style="width:80px">
+      <input id="add-dur" type="number" placeholder="0.5" min="0.01" step="0.1" style="width:65px">
+      <button class="btn btn-green btn-sm" onclick="addCommand()">+ Add</button>
+    </div>
+
+    <div id="plays-inner">
+      <div id="no-cmds">No mappings yet. Add one above.</div>
+    </div>
+  </div>
+
+  <!-- ─── AI INTERACTION ─── -->
+  <div class="card">
+    <div class="panel-hdr">
+      <span>AI Chat Reading Active</span>
+      <label class="toggle" title="Toggle AI">
+        <input type="checkbox" id="ai-toggle" onchange="toggleAI()">
+        <span class="slider"></span>
+      </label>
+      <span id="ai-badge" class="status-badge off">OFF</span>
+    </div>
+
+    <div id="ai-inner">
+      <div id="trig-box">
+        <div class="section-lbl">Trigger Conditions</div>
+        <label class="row-check"><input type="checkbox" id="trig-every-n" onchange="saveTriggers()"> Every <input type="number" id="every-n" value="5" min="1" style="width:55px;margin:0 4px" onchange="saveTriggers()"> messages</label>
+        <label class="row-check"><input type="checkbox" id="trig-mentions" onchange="saveTriggers()"> @bot mentions</label>
+        <label class="row-check"><input type="checkbox" id="trig-bits" onchange="saveTriggers()"> Bits cheer ≥ <input type="number" id="min-bits" value="100" min="1" style="width:65px;margin:0 4px" onchange="saveTriggers()"> bits</label>
+        <label class="row-check"><input type="checkbox" id="trig-points" onchange="saveTriggers()"> Channel Point redeem</label>
+        <div class="field-row" style="padding-left:24px">
+          <label style="min-width:80px">Reward ID:</label>
+          <input type="text" id="reward-id" placeholder="leave blank for any" onchange="saveTriggers()">
+        </div>
+        <div class="hint" style="padding-left:24px">Reward IDs appear in the Console when a redemption arrives.</div>
+        <div class="divider"></div>
+        <label class="row-check"><input type="checkbox" id="tts-ai" onchange="saveTriggers()"> Speak AI replies via TTS</label>
+      </div>
+
+      <div id="prompt-hdr">
+        <span class="section-lbl">System Prompt</span>
+        <select id="prompt-select" onchange="loadPrompt(this.value)"><option value="">— load —</option></select>
+        <input id="prompt-name" type="text" placeholder="name" style="width:120px">
+        <button class="btn btn-neutral btn-sm" onclick="savePrompt()">Save</button>
+      </div>
+      <textarea id="system-prompt" onchange="syncPrompt()" oninput="syncPrompt()"></textarea>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════ CONSOLE ══════════════════════════════ -->
+<div id="console-bar">
+  <span>Console</span>
+  <button class="btn btn-neutral btn-sm" onclick="clearConsole()">Clear</button>
+</div>
+<pre id="console"></pre>
+
+<!-- ════════════════════════ MANUAL AI PROMPT ════════════════════════════ -->
+<div id="manual-bar">
+  <input id="manual-input" type="text" placeholder="Message the AI…"
+    onkeydown="if(event.key==='Enter')sendManual()">
+  <button class="btn btn-neutral btn-sm" onclick="sendManual()">Send</button>
+</div>
+
+<!-- ════════════════════════════ SETTINGS MODAL ══════════════════════════ -->
+<div id="settings-modal" class="modal">
+  <div class="modal-bg" onclick="closeSettings()"></div>
+  <div class="modal-box">
+    <div class="modal-hdr">
+      Connection Settings
+      <button class="close" onclick="closeSettings()">✕</button>
+    </div>
+    <div class="tab-bar">
+      <button class="tab active" onclick="showTab('twitch')">Twitch</button>
+      <button class="tab"        onclick="showTab('ai')">AI</button>
+      <button class="tab"        onclick="showTab('discord')">Discord</button>
+      <button class="tab"        onclick="showTab('tts')">TTS</button>
+    </div>
+    <div class="modal-body">
+
+      <!-- Twitch tab -->
+      <div id="tab-twitch" class="tab-pane active">
+        <div class="field-row"><label>Channel</label><input id="s-channel" type="text" placeholder="channelname"></div>
+        <div class="field-row"><label>Bot Username</label><input id="s-username" type="text" placeholder="mybotname"></div>
+        <div class="field-row"><label>Client ID</label>
+          <div class="field-with-btn">
+            <input id="s-client-id" type="text" placeholder="your Twitch app client ID">
+            <button class="btn btn-neutral btn-sm" onclick="getOAuthUrl()">Get Token ↗</button>
+          </div>
+        </div>
+        <div class="field-row"><label>OAuth Token</label>
+          <div class="field-with-btn">
+            <input id="s-token" type="password" placeholder="oauth:xxxxxxxxxxxxxxxx">
+            <button class="btn-icon btn-sm" onclick="toggleVis(this.previousElementSibling)">👁</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI tab -->
+      <div id="tab-ai" class="tab-pane">
+        <div class="field-row"><label>Provider</label>
+          <select id="s-provider" onchange="onProviderChange()"></select>
+        </div>
+        <div class="field-row" id="api-key-row"><label>API Key</label>
+          <div class="field-with-btn">
+            <input id="s-api-key" type="password" placeholder="sk-... / AIza... / xai-...">
+            <button class="btn-icon btn-sm" onclick="toggleVis(this.previousElementSibling)">👁</button>
+          </div>
+        </div>
+        <div class="field-row"><label>Endpoint</label><input id="s-endpoint" type="text" placeholder="http://localhost:11434/v1/chat/completions"></div>
+        <div class="field-row"><label>Model</label>
+          <div class="field-with-btn">
+            <select id="s-model"></select>
+            <button class="btn btn-neutral btn-sm" onclick="refreshModels()">Refresh</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Discord tab -->
+      <div id="tab-discord" class="tab-pane">
+        <div class="field-row"><label>Bot Token</label>
+          <div class="field-with-btn">
+            <input id="s-discord-token" type="password" placeholder="Bot xxxx...">
+            <button class="btn-icon btn-sm" onclick="toggleVis(this.previousElementSibling)">👁</button>
+          </div>
+        </div>
+        <div class="field-row"><label>Channel ID</label><input id="s-discord-channel" type="text" placeholder="123456789012345678"></div>
+        <div class="field-row"><label>Trigger Mode</label>
+          <select id="s-discord-trigger">
+            <option>All messages</option>
+            <option>@mention only</option>
+            <option>@mention + replies</option>
+            <option>All messages + mentions + replies</option>
+          </select>
+        </div>
+        <div class="warn">⚠ Enable "Message Content Intent" in your bot's Discord Developer Portal.</div>
+        <label class="row-check" style="margin:8px 0">
+          <input type="checkbox" id="s-discord-shared" onchange="toggleDiscordPrompt()">
+          Use shared Twitch system prompt
+        </label>
+        <textarea id="s-discord-prompt" rows="4" placeholder="Discord-specific system prompt…"></textarea>
+      </div>
+
+      <!-- TTS tab -->
+      <div id="tab-tts" class="tab-pane">
+        <div class="field-row"><label>Piper Executable</label>
+          <div class="field-with-btn">
+            <input id="s-piper-exe" type="text" placeholder="piper  or  /path/to/piper">
+            <button class="btn btn-neutral btn-sm" onclick="openBrowser('s-piper-exe')">Browse</button>
+          </div>
+        </div>
+        <div class="field-row"><label>Voice Model (.onnx)</label>
+          <div class="field-with-btn">
+            <input id="s-piper-model" type="text" placeholder="/path/to/voice.onnx">
+            <button class="btn btn-neutral btn-sm" onclick="openBrowser('s-piper-model')">Browse</button>
+          </div>
+        </div>
+        <div class="field-row"><label>Model Config (.json)</label>
+          <div class="field-with-btn">
+            <input id="s-piper-cfg" type="text" placeholder="/path/to/voice.onnx.json (optional)">
+            <button class="btn btn-neutral btn-sm" onclick="openBrowser('s-piper-cfg')">Browse</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /modal-body -->
+    <div class="modal-ftr">
+      <button class="btn btn-neutral" onclick="closeSettings()">Cancel</button>
+      <button class="btn btn-green"   onclick="saveSettings()">Save Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════ FILE BROWSER MODAL ═══════════════════════════ -->
+<div id="fb-modal" class="modal">
+  <div class="modal-bg" onclick="closeBrowser()"></div>
+  <div class="modal-box file-modal-box">
+    <div class="modal-hdr">
+      Browse Files
+      <button class="close" onclick="closeBrowser()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="fb-path"></div>
+      <div id="fb-list"></div>
+    </div>
+    <div class="modal-ftr">
+      <button class="btn btn-neutral" onclick="closeBrowser()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════ JAVASCRIPT ═════════════════════════════ -->
+<script>
+'use strict';
+
+// ── provider metadata (populated from /api/state) ─────────────────────────
+let PROVIDERS = [];
+let PROVIDER_ENDPOINTS = {};
+let PROVIDER_NEEDS_KEY = {};
+
+// ── file browser target field id ──────────────────────────────────────────
+let _fbTarget = null;
+
+// ── helpers ───────────────────────────────────────────────────────────────
+function api(url, method='GET', body=null) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  return fetch(url, opts).then(r => r.json());
+}
+
+function el(id) { return document.getElementById(id); }
+
+function setStatusPill(id, status) {
+  const e = el(id);
+  e.className = 'pill ' + status;
+  const labels = {off:'Off', connecting:'Connecting…', online:'On', error:'Error'};
+  const prefix = id === 'twitch-status' ? 'Twitch' : 'Discord';
+  e.textContent = `${prefix}: ● ${labels[status] || status}`;
+}
+
+function log(line) {
+  const c = el('console');
+  c.textContent += line + '\n';
+  c.scrollTop = c.scrollHeight;
+}
+
+function clearConsole() { el('console').textContent = ''; }
+
+function toggleVis(input) {
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+// ── SSE stream ────────────────────────────────────────────────────────────
+function startSSE() {
+  const es = new EventSource('/stream');
+  es.onmessage = e => log(e.data);
+  es.addEventListener('status', e => {
+    const s = JSON.parse(e.data);
+    applyStatus(s.twitch_status, s.discord_status);
+  });
+  es.onerror = () => setTimeout(startSSE, 3000);
+}
+
+function applyStatus(twitch, discord) {
+  setStatusPill('twitch-status', twitch);
+  setStatusPill('discord-status', discord);
+  el('btn-connect').disabled    = (twitch !== 'off');
+  el('btn-disconnect').disabled = (twitch === 'off');
+  el('btn-dc-connect').disabled    = (discord !== 'off');
+  el('btn-dc-disconnect').disabled = (discord === 'off');
+}
+
+// ── state load ────────────────────────────────────────────────────────────
+function loadState() {
+  return api('/api/state').then(s => {
+    // connection status
+    applyStatus(s.twitch_status, s.discord_status);
+    // provider metadata
+    PROVIDERS = s.providers || [];
+    PROVIDER_ENDPOINTS = s.provider_endpoints || {};
+    PROVIDER_NEEDS_KEY = s.provider_needs_key || {};
+    populateProviders();
+    // toggles
+    el('plays-toggle').checked = !!s.plays_enabled;
+    el('plays-badge').textContent = s.plays_enabled ? 'ON' : 'OFF';
+    el('plays-badge').className = 'status-badge ' + (s.plays_enabled ? 'on' : 'off');
+    el('ai-toggle').checked = !!s.ai_enabled;
+    el('ai-badge').textContent = s.ai_enabled ? 'ON' : 'OFF';
+    el('ai-badge').className = 'status-badge ' + (s.ai_enabled ? 'on' : 'off');
+    // trigger conditions
+    el('trig-every-n').checked  = !!s.trigger_every_n;
+    el('every-n').value         = s.every_n || 5;
+    el('trig-mentions').checked = !!s.trigger_mentions;
+    el('trig-bits').checked     = !!s.trigger_bits;
+    el('min-bits').value        = s.min_bits || 100;
+    el('trig-points').checked   = !!s.trigger_points;
+    el('reward-id').value       = s.reward_id || '';
+    el('tts-ai').checked        = (s.tts_ai !== false);
+    // system prompt
+    el('system-prompt').value   = s.system_prompt || '';
+    el('prompt-name').value     = s.last_prompt || '';
+    // command map
+    renderCommands(s.command_map || {});
+    // log history
+    if (s.log_history && s.log_history.length) {
+      const c = el('console');
+      c.textContent = s.log_history.join('\n') + '\n';
+      c.scrollTop = c.scrollHeight;
+    }
+    // prompts dropdown
+    refreshPromptList();
+    refreshPresetList();
+    return s;
+  });
+}
+
+// ── toggles ───────────────────────────────────────────────────────────────
+function togglePlays() {
+  api('/api/input/toggle','POST').then(r => {
+    el('plays-badge').textContent = r.plays_enabled ? 'ON' : 'OFF';
+    el('plays-badge').className = 'status-badge ' + (r.plays_enabled ? 'on' : 'off');
+  });
+}
+
+function toggleAI() {
+  api('/api/ai/toggle','POST').then(r => {
+    el('ai-badge').textContent = r.ai_enabled ? 'ON' : 'OFF';
+    el('ai-badge').className = 'status-badge ' + (r.ai_enabled ? 'on' : 'off');
+  });
+}
+
+// ── save trigger settings (debounced) ────────────────────────────────────
+let _trigTimer = null;
+function saveTriggers() {
+  clearTimeout(_trigTimer);
+  _trigTimer = setTimeout(() => {
+    api('/api/settings','POST', {
+      trigger_every_n:  el('trig-every-n').checked,
+      every_n:          parseInt(el('every-n').value) || 5,
+      trigger_mentions: el('trig-mentions').checked,
+      trigger_bits:     el('trig-bits').checked,
+      min_bits:         parseInt(el('min-bits').value) || 100,
+      trigger_points:   el('trig-points').checked,
+      reward_id:        el('reward-id').value.trim(),
+      tts_ai:           el('tts-ai').checked,
+    });
+  }, 600);
+}
+
+// ── system prompt sync ────────────────────────────────────────────────────
+let _promptTimer = null;
+function syncPrompt() {
+  clearTimeout(_promptTimer);
+  _promptTimer = setTimeout(() => {
+    api('/api/settings','POST',{system_prompt: el('system-prompt').value});
+  }, 800);
+}
+
+// ── connect / disconnect ──────────────────────────────────────────────────
+function connectTwitch() {
+  applyStatus('connecting', null);
+  api('/api/connect','POST').catch(()=>applyStatus('error',null));
+}
+
+function connectDiscord() {
+  applyStatus(null, 'connecting');
+  api('/api/discord/connect','POST').catch(()=>applyStatus(null,'error'));
+}
+
+// ── manual AI message ─────────────────────────────────────────────────────
+function sendManual() {
+  const inp = el('manual-input');
+  const msg = inp.value.trim();
+  if (!msg) return;
+  inp.value = '';
+  api('/api/ai/manual','POST',{message: msg});
+}
+
+// ── command map ───────────────────────────────────────────────────────────
+let _commandMap = {};
+
+function renderCommands(map) {
+  _commandMap = map;
+  const box = el('plays-inner');
+  box.innerHTML = '';
+  const keys = Object.keys(map).sort();
+  if (!keys.length) {
+    box.innerHTML = '<div id="no-cmds">No mappings yet. Add one above.</div>';
+    return;
+  }
+  keys.forEach(cmd => {
+    const info = map[cmd];
+    const row = document.createElement('div');
+    row.className = 'cmd-row';
+    row.innerHTML = `<span class="cmd-name">${cmd}</span>
+      <span class="cmd-info">→ press <b>'${info.key}'</b> for ${info.duration}s</span>
+      <button class="btn btn-red btn-sm" onclick="removeCommand('${cmd}')">Remove</button>`;
+    box.appendChild(row);
+  });
+}
+
+function addCommand() {
+  let cmd = el('add-cmd').value.trim().toLowerCase();
+  const key = el('add-key').value.trim().toLowerCase();
+  const dur = parseFloat(el('add-dur').value) || 0.3;
+  if (!cmd || !key) return;
+  if (!cmd.startsWith('!')) cmd = '!' + cmd;
+  _commandMap[cmd] = {key, duration: Math.round(dur * 1000) / 1000};
+  el('add-cmd').value = '';
+  el('add-key').value = '';
+  el('add-dur').value = '';
+  renderCommands(_commandMap);
+  api('/api/commands','POST',{commands: _commandMap});
+}
+
+function removeCommand(cmd) {
+  delete _commandMap[cmd];
+  renderCommands(_commandMap);
+  api('/api/commands','POST',{commands: _commandMap});
+}
+
+// ── presets ───────────────────────────────────────────────────────────────
+function refreshPresetList() {
+  api('/api/presets').then(r => {
+    const sel = el('preset-select');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">— select —</option>';
+    (r.presets || []).forEach(n => {
+      const o = document.createElement('option');
+      o.value = o.textContent = n;
+      sel.appendChild(o);
+    });
+    if (cur) sel.value = cur;
+  });
+}
+
+function loadPreset(name) {
+  if (!name) return;
+  api(`/api/presets/${encodeURIComponent(name)}`).then(r => {
+    if (r.commands) {
+      _commandMap = r.commands;
+      renderCommands(_commandMap);
+      api('/api/commands','POST',{commands: _commandMap});
+    }
+  });
+}
+
+function savePreset() {
+  const sel = el('preset-select');
+  let name = sel.value.trim();
+  if (!name) {
+    name = prompt('Preset name:');
+    if (!name) return;
+    name = name.trim();
+  }
+  api(`/api/presets/${encodeURIComponent(name)}`,'POST').then(() => {
+    refreshPresetList();
+    setTimeout(() => { el('preset-select').value = name; }, 200);
+  });
+}
+
+// ── prompts ───────────────────────────────────────────────────────────────
+function refreshPromptList() {
+  api('/api/prompts').then(r => {
+    const sel = el('prompt-select');
+    sel.innerHTML = '<option value="">— load —</option>';
+    (r.prompts || []).forEach(n => {
+      const o = document.createElement('option');
+      o.value = o.textContent = n;
+      sel.appendChild(o);
+    });
+  });
+}
+
+function loadPrompt(name) {
+  if (!name) return;
+  api(`/api/prompts/${encodeURIComponent(name)}`).then(r => {
+    if (r.content !== undefined) {
+      el('system-prompt').value = r.content;
+      el('prompt-name').value   = r.name;
+      api('/api/settings','POST',{system_prompt: r.content, last_prompt: r.name});
+    }
+  });
+  el('prompt-select').value = '';
+}
+
+function savePrompt() {
+  const name    = el('prompt-name').value.trim();
+  const content = el('system-prompt').value;
+  if (!name) { alert('Enter a prompt name first.'); return; }
+  api(`/api/prompts/${encodeURIComponent(name)}`,'POST',{content}).then(() => {
+    refreshPromptList();
+  });
+}
+
+// ── settings modal ────────────────────────────────────────────────────────
+function openSettings() {
+  // Pre-populate fields from current server state
+  api('/api/settings').then(s => {
+    el('s-channel').value           = s.twitch_channel    || '';
+    el('s-username').value          = s.twitch_username   || '';
+    el('s-client-id').value         = s.twitch_client_id  || '';
+    el('s-token').value             = s.twitch_token      || '';
+    el('s-api-key').value           = s.llm_api_key       || '';
+    el('s-endpoint').value          = s.llm_endpoint      || '';
+    el('s-discord-token').value     = s.discord_token     || '';
+    el('s-discord-channel').value   = s.discord_channel_id|| '';
+    el('s-discord-trigger').value   = s.discord_trigger   || 'All messages';
+    el('s-discord-shared').checked  = (s.discord_use_shared_prompt !== false);
+    el('s-discord-prompt').value    = s.discord_prompt    || '';
+    el('s-piper-exe').value         = s.piper_exe         || '';
+    el('s-piper-model').value       = s.piper_model       || '';
+    el('s-piper-cfg').value         = s.piper_config      || '';
+    toggleDiscordPrompt();
+    // provider
+    if (s.llm_provider) {
+      el('s-provider').value = s.llm_provider;
+      onProviderChange(false);
+    }
+    // populate model dropdown with current model
+    const sel = el('s-model');
+    sel.innerHTML = `<option value="${s.llm_model||''}">${s.llm_model||'—'}</option>`;
+  });
+  el('settings-modal').classList.add('open');
+}
+
+function closeSettings() { el('settings-modal').classList.remove('open'); }
+
+function showTab(name) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+  el('tab-' + name).classList.add('active');
+  document.querySelectorAll('.tab').forEach(b => {
+    if (b.textContent.toLowerCase().startsWith(name)) b.classList.add('active');
+  });
+}
+
+function saveSettings() {
+  const body = {
+    twitch_channel:           el('s-channel').value.trim(),
+    twitch_username:          el('s-username').value.trim(),
+    twitch_client_id:         el('s-client-id').value.trim(),
+    twitch_token:             el('s-token').value.trim(),
+    llm_provider:             el('s-provider').value,
+    llm_endpoint:             el('s-endpoint').value.trim(),
+    llm_model:                el('s-model').value,
+    llm_api_key:              el('s-api-key').value.trim(),
+    piper_exe:                el('s-piper-exe').value.trim(),
+    piper_model:              el('s-piper-model').value.trim(),
+    piper_config:             el('s-piper-cfg').value.trim(),
+    discord_token:            el('s-discord-token').value.trim(),
+    discord_channel_id:       el('s-discord-channel').value.trim(),
+    discord_trigger:          el('s-discord-trigger').value,
+    discord_use_shared_prompt:el('s-discord-shared').checked,
+    discord_prompt:           el('s-discord-prompt').value,
+  };
+  api('/api/settings','POST', body).then(() => closeSettings());
+}
+
+// ── provider helpers ──────────────────────────────────────────────────────
+function populateProviders() {
+  const sel = el('s-provider');
+  const cur = sel.value;
+  sel.innerHTML = '';
+  PROVIDERS.forEach(p => {
+    const o = document.createElement('option');
+    o.value = o.textContent = p;
+    sel.appendChild(o);
+  });
+  if (cur && PROVIDERS.includes(cur)) sel.value = cur;
+}
+
+function onProviderChange(autoFill=true) {
+  const p = el('s-provider').value;
+  const needsKey = PROVIDER_NEEDS_KEY[p] !== false;
+  el('api-key-row').style.display = needsKey ? '' : 'none';
+  if (autoFill && PROVIDER_ENDPOINTS[p]) {
+    el('s-endpoint').value = PROVIDER_ENDPOINTS[p];
+    refreshModels();
+  }
+}
+
+function refreshModels() {
+  const p = el('s-provider').value;
+  api(`/api/models?provider=${encodeURIComponent(p)}`).then(r => {
+    const sel = el('s-model');
+    const cur = sel.value;
+    sel.innerHTML = '';
+    (r.models || []).forEach(m => {
+      const o = document.createElement('option');
+      o.value = o.textContent = m;
+      sel.appendChild(o);
+    });
+    if (cur && r.models && r.models.includes(cur)) sel.value = cur;
+  });
+}
+
+function getOAuthUrl() {
+  const clientId = el('s-client-id').value.trim();
+  if (!clientId) { alert('Enter your Client ID first.'); return; }
+  const url = `https://id.twitch.tv/oauth2/authorize?client_id=${clientId}&redirect_uri=http://localhost&response_type=token&scope=chat:read+chat:edit`;
+  log('[Auth] ── OAuth Authorization URL ──');
+  log(url);
+  log('[Auth] 1. Click Authorize on the Twitch page.');
+  log('[Auth] 2. Browser redirects to localhost (error page is fine).');
+  log('[Auth] 3. Copy the value between "access_token=" and "&scope" in the address bar.');
+  log('[Auth] 4. Paste it into the OAuth Token field in Settings → Twitch.');
+  log('[Auth] 5. Click Save Settings, then Connect.');
+  window.open(url, '_blank');
+  closeSettings();
+}
+
+function toggleDiscordPrompt() {
+  el('s-discord-prompt').style.display =
+    el('s-discord-shared').checked ? 'none' : '';
+}
+
+// ── file browser ──────────────────────────────────────────────────────────
+function openBrowser(targetFieldId) {
+  _fbTarget = targetFieldId;
+  el('fb-modal').classList.add('open');
+  browseTo(null);
+}
+
+function closeBrowser() {
+  el('fb-modal').classList.remove('open');
+  _fbTarget = null;
+}
+
+function browseTo(path) {
+  const url = '/api/browse' + (path ? '?path=' + encodeURIComponent(path) : '');
+  api(url).then(r => {
+    el('fb-path').textContent = r.path;
+    const list = el('fb-list');
+    list.innerHTML = '';
+
+    // Parent directory
+    if (r.parent) {
+      const row = document.createElement('div');
+      row.className = 'fb-entry';
+      row.innerHTML = '<span class="fb-icon">📁</span><span>..</span>';
+      row.onclick = () => browseTo(r.parent);
+      list.appendChild(row);
+    }
+
+    // Dirs
+    r.dirs.forEach(d => {
+      const row = document.createElement('div');
+      row.className = 'fb-entry';
+      row.innerHTML = `<span class="fb-icon">📁</span><span>${d}</span>`;
+      row.onclick = () => browseTo(r.path + '/' + d);
+      list.appendChild(row);
+    });
+
+    // Files
+    r.files.forEach(f => {
+      const row = document.createElement('div');
+      row.className = 'fb-entry';
+      row.innerHTML = `<span class="fb-icon">📄</span><span>${f}</span>`;
+      row.onclick = () => {
+        if (_fbTarget) el(_fbTarget).value = r.path + '/' + f;
+        closeBrowser();
+      };
+      list.appendChild(row);
+    });
+  });
+}
+
+// ── applyStatus guard (allow null = no change) ────────────────────────────
+const _origApplyStatus = applyStatus;
+window.applyStatus = function(twitch, discord) {
+  if (twitch === null) twitch = el('twitch-status').dataset.status;
+  if (discord === null) discord = el('discord-status').dataset.status;
+  el('twitch-status').dataset.status = twitch;
+  el('discord-status').dataset.status = discord;
+  _origApplyStatus(twitch, discord);
+};
+
+// ── init ──────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  loadState().then(() => startSSE());
+});
+</script>
+</body>
+</html>
