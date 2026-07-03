@@ -800,6 +800,8 @@ class TwitchBotApp(ctk.CTk):
         # Auto-connect if all credentials are already saved
         if all(self._env.get(k) for k in ("TWITCH_CHANNEL", "TWITCH_USERNAME", "TWITCH_TOKEN")):
             self.after(800, self._connect)
+        if self._env.get("DISCORD_TOKEN") and self._env.get("DISCORD_CHANNEL_ID"):
+            self.after(1200, self._discord_connect)
 
     # ── Platform diagnostics ─────────────────────────────────────────────────
 
@@ -1510,8 +1512,11 @@ class TwitchBotApp(ctk.CTk):
             return
 
         def on_ready_cb():
-            self.after(0, lambda: self._lbl_discord_status.configure(
-                text="Discord: ● On", text_color=ON_FG))
+            try:
+                self.after(0, lambda: self._lbl_discord_status.configure(
+                    text="Discord: ● On", text_color=ON_FG))
+            except Exception:
+                pass
 
         self._discord = DiscordClient(
             get_config=self._get_discord_cfg,
@@ -1889,6 +1894,11 @@ class TwitchBotApp(ctk.CTk):
             f"PIPER_EXE={self.e_piper_exe.get().strip()}",
             f"PIPER_MODEL={self.e_piper_model.get().strip()}",
             f"PIPER_CONFIG={self.e_piper_cfg.get().strip()}",
+            f"DISCORD_TOKEN={self.e_discord_token.get().strip()}",
+            f"DISCORD_CHANNEL_ID={self.e_discord_channel_id.get().strip()}",
+            f"DISCORD_TRIGGER={self._discord_trigger_combo.get()}",
+            f"DISCORD_USE_SHARED_PROMPT={'true' if self._var_discord_shared_prompt.get() else 'false'}",
+            f"DISCORD_PROMPT={self._discord_prompt_box.get('1.0', 'end-1c')}",
         ]
         with open(self._env_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
