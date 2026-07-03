@@ -760,10 +760,15 @@ class TwitchBotApp(ctk.CTk):
         self._prompt_lock:  threading.Lock = threading.Lock()
         self._prompt_cache: str = ""
 
+        # Discord-specific prompt cache (same thread-safety pattern as _prompt_cache)
+        self._discord_prompt_lock:  threading.Lock = threading.Lock()
+        self._discord_prompt_cache: str = ""
+
         # Service handles
-        self._irc: TwitchIRCClient | None = None
-        self._tts: TTSEngine | None = None
-        self._ai:  AIResponseHandler | None = None
+        self._irc:     TwitchIRCClient | None = None
+        self._tts:     TTSEngine | None = None
+        self._ai:      AIResponseHandler | None = None
+        self._discord: DiscordClient | None = None
 
         self._build_ui()
         self._apply_settings(self._load_settings())
@@ -970,6 +975,80 @@ class TwitchBotApp(ctk.CTk):
                    default=e.get("PIPER_CONFIG", ""))
 
         # Connect / Disconnect live in the main window header bar
+
+        # ── Discord Bot ───────────────────────────────────────────────────────
+        section("Discord Bot")
+
+        field("Bot Token",  "e_discord_token",
+              default=e.get("DISCORD_TOKEN", ""),
+              placeholder="Bot xxxxxxxxxxxxxxxxxxxx…", secret=True)
+        field("Channel ID", "e_discord_channel_id",
+              default=e.get("DISCORD_CHANNEL_ID", ""),
+              placeholder="123456789012345678")
+
+        # Trigger mode dropdown
+        ctk.CTkLabel(tab, text="Trigger Mode", anchor="e").grid(
+            row=r, column=0, sticky="e", padx=(14, 8), pady=5)
+        _saved_trigger = e.get("DISCORD_TRIGGER", DiscordClient.TRIGGER_MODES[0])
+        if _saved_trigger not in DiscordClient.TRIGGER_MODES:
+            _saved_trigger = DiscordClient.TRIGGER_MODES[0]
+        self._discord_trigger_combo = ctk.CTkComboBox(
+            tab, values=DiscordClient.TRIGGER_MODES, width=280,
+        )
+        self._discord_trigger_combo.set(_saved_trigger)
+        self._discord_trigger_combo.grid(row=r, column=1, sticky="w", padx=(0, 14), pady=5)
+        r += 1
+
+        # Shared prompt toggle
+        ctk.CTkLabel(tab, text="System Prompt", anchor="e").grid(
+            row=r, column=0, sticky="ne", padx=(14, 8), pady=(8, 2))
+        _saved_shared = e.get("DISCORD_USE_SHARED_PROMPT", "true").lower() != "false"
+        self._var_discord_shared_prompt = ctk.BooleanVar(value=_saved_shared)
+        _prompt_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        _prompt_frame.grid(row=r, column=1, sticky="ew", padx=(0, 14), pady=5)
+        _prompt_frame.grid_columnconfigure(0, weight=1)
+        ctk.CTkCheckBox(
+            _prompt_frame, text="Use shared Twitch prompt",
+            variable=self._var_discord_shared_prompt,
+            command=self._toggle_discord_prompt_box,
+        ).grid(row=0, column=0, sticky="w")
+        r += 1
+
+        # Discord-specific prompt textbox (hidden when shared prompt is active)
+        self._discord_prompt_box = ctk.CTkTextbox(tab, height=80)
+        _saved_dprompt = e.get("DISCORD_PROMPT", "")
+        if _saved_dprompt:
+            self._discord_prompt_box.insert("1.0", _saved_dprompt)
+        self._discord_prompt_box.grid(
+            row=r, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 4))
+        r += 1
+
+        # Hide prompt box if using shared prompt
+        if _saved_shared:
+            self._discord_prompt_box.grid_remove()
+
+        # Discord Connect / Disconnect buttons
+        _dc_btn_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        _dc_btn_frame.grid(row=r, column=1, sticky="w", padx=(0, 14), pady=(6, 10))
+        self._btn_discord_connect = ctk.CTkButton(
+            _dc_btn_frame, text="Connect Discord", width=140,
+            fg_color=_GREEN[0], hover_color=_GREEN[1],
+            command=self._discord_connect,
+        )
+        self._btn_discord_connect.pack(side="left", padx=(0, 8))
+        self._btn_discord_disconnect = ctk.CTkButton(
+            _dc_btn_frame, text="Disconnect", width=110,
+            fg_color=_RED[0], hover_color=_RED[1], state="disabled",
+            command=self._discord_disconnect,
+        )
+        self._btn_discord_disconnect.pack(side="left")
+        r += 1
+
+    def _toggle_discord_prompt_box(self) -> None:
+        if self._var_discord_shared_prompt.get():
+            self._discord_prompt_box.grid_remove()
+        else:
+            self._discord_prompt_box.grid()
 
     # ── Twitch Plays tab ──────────────────────────────────────────────────────
 
@@ -1205,10 +1284,16 @@ class TwitchBotApp(ctk.CTk):
         ).grid(row=0, column=0, sticky="w", padx=16, pady=10)
 
         self._lbl_conn_status = ctk.CTkLabel(
-            hdr, text="● Disconnected", text_color=OFF_FG,
+            hdr, text="Twitch: ● Off", text_color=OFF_FG,
             font=ctk.CTkFont(size=12),
         )
-        self._lbl_conn_status.grid(row=0, column=4, padx=(0, 14), pady=10)
+        self._lbl_conn_status.grid(row=0, column=4, padx=(0, 8), pady=10)
+
+        self._lbl_discord_status = ctk.CTkLabel(
+            hdr, text="Discord: ● Off", text_color=OFF_FG,
+            font=ctk.CTkFont(size=12),
+        )
+        self._lbl_discord_status.grid(row=0, column=5, padx=(0, 14), pady=10)
 
         self._btn_disconnect = ctk.CTkButton(
             hdr, text="Disconnect", width=120, state="disabled",
@@ -1369,7 +1454,7 @@ class TwitchBotApp(ctk.CTk):
         self._irc.connect()
         self._btn_connect.configure(state="disabled")
         self._btn_disconnect.configure(state="normal")
-        self._lbl_conn_status.configure(text="● Connecting…", text_color="#f39c12")
+        self._lbl_conn_status.configure(text="Twitch: ● Connecting…", text_color="#f39c12")
 
     def _disconnect(self) -> None:
         if self._irc:
@@ -1377,7 +1462,7 @@ class TwitchBotApp(ctk.CTk):
             self._irc = None
         self._btn_connect.configure(state="normal")
         self._btn_disconnect.configure(state="disabled")
-        self._lbl_conn_status.configure(text="● Disconnected", text_color=OFF_FG)
+        self._lbl_conn_status.configure(text="Twitch: ● Off", text_color=OFF_FG)
         self._log("[System] Disconnected.")
 
     def _panic_tts(self) -> None:
@@ -1404,7 +1489,7 @@ class TwitchBotApp(ctk.CTk):
 
         # Update connection status indicator the first time a message arrives
         self.after(0, lambda: self._lbl_conn_status.configure(
-            text="● Connected", text_color=ON_FG))
+            text="Twitch: ● On", text_color=ON_FG))
 
     def _route_plays(self, username: str, message: str) -> None:
         word = message.strip().split()[0].lower() if message.strip() else ""
