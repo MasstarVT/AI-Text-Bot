@@ -1361,6 +1361,68 @@ class TwitchBotApp(ctk.CTk):
                 command=lambda c=cmd: self._remove_mapping(c),
             ).grid(row=0, column=2, padx=12, pady=8)
 
+    def _list_presets(self) -> list[str]:
+        if not os.path.isdir(self._presets_dir):
+            return []
+        return sorted(f[:-5] for f in os.listdir(self._presets_dir) if f.endswith(".json"))
+
+    def _preset_values(self) -> list[str]:
+        return ["+ New Preset"] + self._list_presets()
+
+    def _on_preset_selected(self, name: str) -> None:
+        if name == "+ New Preset":
+            self._new_preset()
+            return
+        path = os.path.join(self._presets_dir, f"{name}.json")
+        if not os.path.exists(path):
+            self._log(f"[Presets] File not found: {name}.json")
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            self._log(f"[Presets] Failed to load '{name}': {e}")
+            return
+        self.command_map = {k: v for k, v in data.items()}
+        self._refresh_plays()
+        self._log(f"[Presets] Loaded: {name}")
+
+    def _save_preset(self) -> None:
+        name = self._preset_combo.get().strip()
+        if not name or name == "+ New Preset":
+            self._log("[Presets] Select or type a preset name first.")
+            return
+        safe = re.sub(r'[^\w\s\-]', '', name).strip()
+        if not safe:
+            self._log("[Presets] Invalid name — use letters, numbers, spaces, or dashes.")
+            return
+        path = os.path.join(self._presets_dir, f"{safe}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.command_map, f, indent=2)
+        self._preset_combo.configure(values=self._preset_values())
+        self._preset_combo.set(safe)
+        self._log(f"[Presets] Saved → {safe}")
+
+    def _new_preset(self) -> None:
+        dialog = ctk.CTkInputDialog(text="Name for new preset:", title="New Preset")
+        name = dialog.get_input()
+        if not name:
+            self._preset_combo.configure(values=self._preset_values())
+            self._preset_combo.set("")
+            return
+        safe = re.sub(r'[^\w\s\-]', '', name.strip()).strip()
+        if not safe:
+            self._log("[Presets] Invalid name — use letters, numbers, spaces, or dashes.")
+            self._preset_combo.configure(values=self._preset_values())
+            self._preset_combo.set("")
+            return
+        path = os.path.join(self._presets_dir, f"{safe}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.command_map, f, indent=2)
+        self._preset_combo.configure(values=self._preset_values())
+        self._preset_combo.set(safe)
+        self._log(f"[Presets] Created preset '{safe}' with current mappings.")
+
     # ══════════════════════════════════════════════════════════════════════════
     # Settings persistence (settings.json)
     # ══════════════════════════════════════════════════════════════════════════
