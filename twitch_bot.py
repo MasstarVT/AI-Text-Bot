@@ -1183,7 +1183,7 @@ class TwitchBotApp(ctk.CTk):
     # ══════════════════════════════════════════════════════════════════════════
 
     def _connect(self) -> None:
-        self._save_env()
+        self._save_env(log=True)
         self._irc = TwitchIRCClient(
             get_creds=self._get_irc_creds,
             log=self._log,
@@ -1382,6 +1382,7 @@ class TwitchBotApp(ctk.CTk):
 
     def _autosave(self) -> None:
         self._save_settings()
+        self._save_env()
         self.after(10_000, self._autosave)
 
     def _save_settings(self) -> None:
@@ -1480,7 +1481,7 @@ class TwitchBotApp(ctk.CTk):
                 env[k.strip()] = v.strip()
         return env
 
-    def _save_env(self) -> None:
+    def _save_env(self, *, log: bool = False) -> None:
         lines = [
             f"TWITCH_CHANNEL={self.e_channel.get().strip()}",
             f"TWITCH_USERNAME={self.e_username.get().strip()}",
@@ -1496,7 +1497,8 @@ class TwitchBotApp(ctk.CTk):
         ]
         with open(self._env_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
-        self._log("[System] Connection settings saved to .env")
+        if log:
+            self._log("[System] Connection settings saved to .env")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Prompt save / load
@@ -1676,6 +1678,7 @@ class TwitchBotApp(ctk.CTk):
 
     def on_closing(self) -> None:
         self._save_settings()
+        self._save_env()
         self._disconnect()
         self._stop_services()
         self.destroy()
