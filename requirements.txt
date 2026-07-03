@@ -1,8 +1,5 @@
-# Twitch Interactive Bot — Python dependencies
-# Install with:  pip install -r requirements.txt
-
-# GUI framework
-customtkinter>=5.2.0
+# HTTP server for web UI
+flask>=3.0.0
 
 # HTTP client for local LLM (Ollama / LM Studio)
 requests>=2.31.0
@@ -11,8 +8,6 @@ requests>=2.31.0
 pygame>=2.5.0
 
 # Game input simulation
-# pydirectinput works on Windows (DirectX / Raw-input compatible)
-# pynput works on Linux, macOS, and Windows as a fallback
 pydirectinput>=1.0.4
 pynput>=1.7.6
 
