@@ -617,8 +617,11 @@ class DiscordClient:
                 asyncio.run_coroutine_threadsafe(self._bot.close(), self._loop).result(timeout=5)
             except Exception:
                 pass
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=6)
         self._bot = None
         self._loop = None
+        self._thread = None
 
     # ── internal ──────────────────────────────────────────────────────────────
 
@@ -666,8 +669,12 @@ class DiscordClient:
             try:
                 channel_id = int(cfg.get("discord_channel_id", 0) or 0)
             except ValueError:
+                log("[Discord] Invalid channel ID — enter a numeric channel ID in Connection Settings.")
                 return
 
+            if channel_id == 0:
+                log("[Discord] No channel ID configured — enter one in Connection Settings.")
+                return
             if message.channel.id != channel_id:
                 return
 
@@ -681,22 +688,30 @@ class DiscordClient:
             channel = message.channel
 
             def reply_cb(text: str) -> None:
-                asyncio.run_coroutine_threadsafe(channel.send(text), loop)
+                fut = asyncio.run_coroutine_threadsafe(channel.send(text), loop)
+                fut.add_done_callback(
+                    lambda f: log(f"[Discord] Send error: {f.exception()}")
+                    if not f.cancelled() and f.exception() else None
+                )
 
             ai.handle(message.author.name, message.content,
                       reply_cb=reply_cb, prompt_override=discord_prompt)
 
         try:
             self._loop.run_until_complete(bot.start(token))
+        except discord.LoginFailure:
+            self.log("[Discord] Login failed — check your bot token.")
         except Exception as exc:
             if self._running:
                 self.log(f"[Discord] Error: {exc}")
         finally:
             self._running = False
-            try:
-                self._loop.close()
-            except Exception:
-                pass
+            _loop = self._loop
+            if _loop is not None:
+                try:
+                    _loop.close()
+                except Exception:
+                    pass
 
     @staticmethod
     def _is_triggered(trigger: str, bot_user, message) -> bool:
