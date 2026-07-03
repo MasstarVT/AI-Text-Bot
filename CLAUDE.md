@@ -25,7 +25,9 @@ Single file: `twitch_bot.py`. Four classes plus the app window:
 
 - **No GUI calls from worker threads.** All background → GUI communication goes through `_log_queue` (a `queue.Queue[str]`), drained by `_poll_logs()` via `self.after(80, ...)` on the main thread.
 - `game_input_enabled` and `ai_enabled` are `ctk.BooleanVar`; `.get()` is GIL-safe for reads from any thread.
+- `CTkEntry` / `CTkComboBox` `.get()` calls are also GIL-safe scalar reads from worker threads. **`CTkTextbox.get(index, index)` is not** — it's a Tcl round-trip. Use `_prompt_cache` / `_prompt_lock` instead (updated every 80 ms by `_sync_prompt_cache()` in `_poll_logs`).
 - `get_config` / `get_creds` callables are passed to workers so they always read the latest GUI field values without storing stale snapshots.
+- When reading a shared object reference from a worker thread (e.g. `self._ai`, `self._sock`), **snapshot it to a local variable first** (`ai = self._ai`) before the truthiness check and use. This closes the TOCTOU window where the GUI thread can null the reference between the check and the call.
 
 ## AI trigger logic (`_route_ai`)
 
@@ -39,6 +41,21 @@ Four independent checkboxes — AI fires if **any** enabled condition is met:
 | Channel Point redeem | parsed from `custom-reward-id` IRCv3 tag; Reward ID field is optional (blank = any) |
 
 Bits and channel-point data come from IRCv3 tags parsed in `TwitchIRCClient._handle`. Only text-required channel point redemptions appear in IRC; reward IDs are logged to the Console so users can copy them.
+
+## TTS panic / stop behaviour
+
+`TTSEngine` has two shutdown paths:
+
+| Method | What it does |
+|---|---|
+| `stop()` | Enqueues `None` sentinel — worker exits cleanly after finishing the current item |
+| `panic()` | Drains the queue (re-enqueuing any `None` sentinel it finds), sets `_stop_event`, stops pygame, kills the active Piper subprocess |
+
+`_worker` logic after dequeue:
+1. If `_stop_event` is set → **clear it** (consume the panic) then `continue` (skip this item). The *next* item will synthesise normally.
+2. If not set → `_synthesize(item)`.
+
+`_proc_lock` protects `_current_proc`. Both `panic()` and `_synthesize()` check `_stop_event` inside the lock before starting a subprocess, so there is no window where a process can be launched after a panic.
 
 ## Bundled Piper TTS (`piper/`)
 
