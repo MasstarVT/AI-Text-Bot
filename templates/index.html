@@ -404,9 +404,11 @@ function _ttsEnqueue(wav_b64) {
 function _ttsPlayNext() {
   if (!_ttsQueue.length) { _ttsActive = null; return; }
   const b64 = _ttsQueue.shift();
-  _ttsActive = new Audio('data:audio/wav;base64,' + b64);
-  _ttsActive.onended = _ttsPlayNext;
-  _ttsActive.play().catch(_ttsPlayNext);
+  const audio = new Audio('data:audio/wav;base64,' + b64);
+  _ttsActive = audio;
+  audio.onended = _ttsPlayNext;
+  audio.onerror = () => { if (_ttsActive === audio) { _ttsActive = null; _ttsPlayNext(); } };
+  audio.play().catch(() => { if (_ttsActive === audio) _ttsPlayNext(); });
 }
 
 function _ttsPanic() {
