@@ -345,8 +345,10 @@ class AIResponseHandler:
     Sends chat messages to a local LLM via HTTP (OpenAI-compatible endpoint).
     Compatible with Ollama (:11434) and LM Studio (:1234) out of the box.
 
-    handle(username, message) enqueues work; a single daemon thread makes the
-    blocking HTTP call and pipes the reply text to TTSEngine.speak().
+    handle(username, message, reply_cb, prompt_override) enqueues work; a single
+    daemon thread makes the blocking HTTP call and pipes the reply text to
+    TTSEngine.speak(). reply_cb, if provided, is called from the AI worker thread —
+    it must not make GUI/CTk calls directly.
     """
 
     def __init__(self, get_config, log, tts: TTSEngine) -> None:
@@ -378,7 +380,10 @@ class AIResponseHandler:
         endpoint      = cfg.get("endpoint")      or "http://localhost:11434/v1/chat/completions"
         model         = cfg.get("model")         or "llama3"
         api_key       = cfg.get("api_key",  "")
-        system_prompt = prompt_override or cfg.get("system_prompt") or "You are a helpful Twitch chat bot."
+        system_prompt = (
+            prompt_override if prompt_override is not None
+            else cfg.get("system_prompt")
+        ) or "You are a helpful Twitch chat bot."
         use_tts       = cfg.get("tts_ai", True)
         fmt           = _PROVIDERS.get(provider, {}).get("fmt", "openai")
 
