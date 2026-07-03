@@ -1576,3 +1576,14 @@ class WebApp:
         ai = self._ai
         if triggered and ai:
             ai.handle(username, message)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Entry point
+# ══════════════════════════════════════════════════════════════════════════════
+if __name__ == "__main__":
+    web = WebApp()
+    port = web._config.get("web_port", 5000)
+    print(f"[System] Web UI starting → http://0.0.0.0:{port}")
+    print(f"[System] Open http://<your-ip>:{port} in your browser")
+    web._flask.run(host="0.0.0.0", port=port, threaded=True, debug=False)
