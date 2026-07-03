@@ -1130,6 +1130,10 @@ class WebApp:
             if tts:
                 tts.panic()
             self._log("[TTS] Panic — audio stopped and queue cleared.")
+            msg = "event: tts-panic\ndata: {}\n\n"
+            with self._log_lock:
+                for q in list(self._sse_clients):
+                    q.put(msg)
             return _flask.jsonify({"ok": True})
 
         @app.route("/api/commands", methods=["POST"])
