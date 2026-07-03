@@ -148,12 +148,12 @@ class GameInputController:
 # ══════════════════════════════════════════════════════════════════════════════
 class TTSEngine:
     """
-    Text-to-Speech via Piper TTS (subprocess) + pygame playback.
+    Text-to-Speech via Piper TTS (subprocess).
 
     speak(text) enqueues work; a single daemon thread dequeues and processes
     serially so audio clips never overlap.  The subprocess writes a temp .wav
-    which pygame loads as a Sound object; we block in the TTS thread (not the
-    GUI thread) until playback finishes, then delete the temp file.
+    which is base64-encoded and passed to the on_audio callback (if set) for
+    delivery to browser clients via SSE.
     """
 
     def __init__(self, get_config, log, on_audio=None) -> None:
@@ -187,12 +187,6 @@ class TTSEngine:
             self._q.put(None)
         # Signal the play loop to abort
         self._stop_event.set()
-        # Stop pygame playback
-        if HAS_PYGAME:
-            try:
-                pygame.mixer.stop()
-            except Exception:
-                pass
         # Kill any running subprocess (Piper synthesis or system audio player)
         with self._proc_lock:
             if self._current_proc and self._current_proc.poll() is None:
