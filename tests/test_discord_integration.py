@@ -43,6 +43,7 @@ class TestAIHandlerReplyCallback(unittest.TestCase):
         }
         handler._mock_patch = patch("requests.post", return_value=mock_resp)
         handler._mock_patch.start()
+        self.addCleanup(handler._mock_patch.stop)
         return handler
 
     def tearDown(self):
@@ -60,7 +61,6 @@ class TestAIHandlerReplyCallback(unittest.TestCase):
 
         handler.handle("testuser", "hi there", reply_cb=cb)
         done.wait(timeout=5)
-        handler._mock_patch.stop()
 
         self.assertEqual(received, ["Hello from AI"])
 
@@ -79,8 +79,7 @@ class TestAIHandlerReplyCallback(unittest.TestCase):
 
         handler._query = wrapped
         handler.handle("twitchuser", "hello")
-        done.wait(timeout=5)
-        handler._mock_patch.stop()
+        self.assertTrue(done.wait(timeout=5), "AI worker did not complete within 5 s")
 
     def test_prompt_override_used_when_provided(self):
         """prompt_override replaces the system_prompt from get_config."""
@@ -180,6 +179,15 @@ class TestDiscordClientTriggerMode(unittest.TestCase):
     def test_mention_plus_replies_no_trigger_for_plain_message(self):
         bot = MagicMock()
         msg = self._make_message(bot, mentions=[], is_reply_to_bot=False)
+        self.assertFalse(self._is_triggered("@mention + replies", bot, msg))
+
+    def test_mention_plus_replies_no_trigger_for_reply_to_other_user(self):
+        bot = MagicMock()
+        other_user = MagicMock()
+        msg = self._make_message(bot, mentions=[])
+        msg.reference = MagicMock()
+        msg.reference.resolved = MagicMock()
+        msg.reference.resolved.author = other_user
         self.assertFalse(self._is_triggered("@mention + replies", bot, msg))
 
 
