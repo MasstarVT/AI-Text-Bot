@@ -1106,8 +1106,10 @@ class TwitchBotApp(ctk.CTk):
         )
         self._console.grid(row=3, column=0, sticky="ew", padx=10, pady=(2, 0))
 
+        self._build_manual_prompt()
+
         footer = ctk.CTkFrame(self, fg_color="transparent")
-        footer.grid(row=4, column=0, sticky="ew", padx=10, pady=(6, 8))
+        footer.grid(row=5, column=0, sticky="ew", padx=10, pady=(6, 8))
 
         ctk.CTkButton(
             footer, text="⚙", width=38, height=32,
@@ -1601,6 +1603,34 @@ class TwitchBotApp(ctk.CTk):
         self._console.configure(state="normal")
         self._console.delete("1.0", "end")
         self._console.configure(state="disabled")
+
+    def _send_manual_prompt(self) -> None:
+        msg = self._e_manual_prompt.get().strip()
+        if not msg:
+            return
+        self._e_manual_prompt.delete(0, "end")
+        self._log(f"[Host]: {msg}")
+        ai = self._ai
+        if not ai:
+            self._log("[Host] AI not initialised — restart the app.")
+            return
+        ai.handle("Host", msg)
+
+    def _build_manual_prompt(self) -> None:
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.grid(row=4, column=0, sticky="ew", padx=10, pady=(2, 0))
+        bar.grid_columnconfigure(0, weight=1)
+
+        self._e_manual_prompt = ctk.CTkEntry(
+            bar, placeholder_text="Message the AI...",
+        )
+        self._e_manual_prompt.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        self._e_manual_prompt.bind("<Return>", lambda _: self._send_manual_prompt())
+
+        ctk.CTkButton(
+            bar, text="Send", width=80,
+            command=self._send_manual_prompt,
+        ).grid(row=0, column=1)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Utilities
