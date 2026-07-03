@@ -375,7 +375,7 @@ function el(id) { return document.getElementById(id); }
 function setStatusPill(id, status) {
   const e = el(id);
   e.className = 'pill ' + status;
-  const labels = {off:'Off', connecting:'Connecting…', online:'On', error:'Error'};
+  const labels = {off:'Off', connecting:'Connecting…', online:'Online', error:'Error'};
   const prefix = id === 'twitch-status' ? 'Twitch' : 'Discord';
   e.textContent = `${prefix}: ● ${labels[status] || status}`;
 }
@@ -772,7 +772,17 @@ function closeBrowser() {
 function browseTo(path) {
   const url = '/api/browse' + (path ? '?path=' + encodeURIComponent(path) : '');
   api(url).then(r => {
-    el('fb-path').textContent = r.path;
+    const pathEl = el('fb-path');
+    pathEl.innerHTML = '';
+    const parts = r.path.replace(/\\/g, '/').split('/').filter(Boolean);
+    parts.forEach((seg, i) => {
+      const target = '/' + parts.slice(0, i + 1).join('/');
+      const sp = document.createElement('span');
+      sp.textContent = (i === 0 ? '/' : '') + seg + '/';
+      sp.style.cssText = 'cursor:pointer;text-decoration:underline;margin-right:2px';
+      sp.onclick = () => browseTo(target);
+      pathEl.appendChild(sp);
+    });
     const list = el('fb-list');
     list.innerHTML = '';
 
