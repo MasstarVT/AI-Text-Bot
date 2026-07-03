@@ -1047,14 +1047,18 @@ class WebApp:
         if self._discord:
             self._discord.disconnect()
             self._discord = None
-        if self._tts:
-            self._tts.stop()
-            self._tts = None
         if self._ai:
             self._ai.stop()
             self._ai = None
+        if self._tts:
+            self._tts.stop()
+            self._tts = None
 
     def _connect(self) -> None:
+        irc = self._irc
+        if irc:
+            irc.disconnect()
+            self._irc = None
         self._save_env()
         with self._config_lock:
             self._config["twitch_status"] = "connecting"
@@ -1082,6 +1086,8 @@ class WebApp:
             self._discord.disconnect()
         self._save_env()
 
+        _inst: list = [None]
+
         def on_ready_cb() -> None:
             with self._config_lock:
                 self._config["discord_status"] = "online"
@@ -1090,20 +1096,23 @@ class WebApp:
         def on_failure_cb() -> None:
             with self._config_lock:
                 self._config["discord_status"] = "error"
-            self._discord = None
+                if self._discord is _inst[0]:
+                    self._discord = None
             self._broadcast_status()
 
         with self._config_lock:
             self._config["discord_status"] = "connecting"
         self._broadcast_status()
 
-        self._discord = DiscordClient(
+        client = DiscordClient(
             get_config=self._get_discord_cfg,
             log=self._log,
             ai_handler=self._ai,
             on_ready_cb=on_ready_cb,
             on_failure_cb=on_failure_cb,
         )
+        _inst[0] = client
+        self._discord = client
         self._discord.connect()
         self._log("[Discord] Connecting…")
 
@@ -1148,13 +1157,16 @@ class WebApp:
         if word not in command_map or not enabled:
             return
         entry = command_map[word]
+        key = entry.get("key", "")
+        duration = entry.get("duration", 0)
+        if not key:
+            self._log(f"[Plays] Bad entry for '{word}' — missing 'key'")
+            return
         self._log(
             f"[Plays] {username} → {word}  "
-            f"(key '{entry['key']}' × {entry['duration']}s)"
+            f"(key '{key}' × {duration}s)"
         )
-        GameInputController(_BoolGetter(enabled)).execute(
-            entry["key"], entry["duration"]
-        )
+        GameInputController(_BoolGetter(enabled)).execute(key, duration)
 
     def _route_ai(self, username: str, message: str,
                   bits: int = 0, reward_id: str = "") -> None:
