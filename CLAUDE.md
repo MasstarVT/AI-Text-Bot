@@ -11,7 +11,7 @@ The app requires a display (`DISPLAY=:0` on Linux). All dependencies are install
 
 ## Architecture
 
-Single file: `twitch_bot.py`. Four classes plus the app window:
+Single file: `twitch_bot.py`. Five classes plus the app window:
 
 | Class | Responsibility |
 |---|---|
@@ -20,6 +20,7 @@ Single file: `twitch_bot.py`. Four classes plus the app window:
 | `AIResponseHandler` | Queue-backed worker; POSTs to local LLM (OpenAI-compatible endpoint) |
 | `TTSEngine` | Queue-backed worker; runs Piper subprocess, plays WAV via pygame |
 | `GameInputController` | Fire-and-forget key presses via pydirectinput (Windows) or pynput (Linux) |
+| `DiscordClient` | Discord bot on a daemon thread with its own asyncio loop; filters messages by trigger mode and routes them through the shared `AIResponseHandler` |
 
 ## Key design rules
 
@@ -63,13 +64,43 @@ Piper TTS 2023.11.14-2 (Linux x86_64) is extracted into `piper/` next to the scr
 
 To re-download: `curl -L https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz | tar -xz`
 
+## Discord integration (`DiscordClient`)
+
+`DiscordClient` runs `discord.py` on a dedicated daemon thread with its own asyncio event loop. It filters incoming messages by one of four trigger modes, then hands them to the shared `AIResponseHandler` with a `reply_cb` that posts the AI reply back to the originating channel. TTS is suppressed for Discord replies (`use_tts=False`).
+
+**Trigger modes** (`DiscordClient.TRIGGER_MODES`):
+
+| Mode | When AI fires |
+|---|---|
+| All messages | Every message in the configured channel |
+| @mention only | Messages that @mention the bot |
+| @mention + replies | @mentions and replies to the bot |
+| All messages + mentions + replies | All of the above |
+
+**Auto-connect on startup:** if `DISCORD_TOKEN` and `DISCORD_CHANNEL_ID` are both set in `.env`, `TwitchBotApp.__init__` schedules `_discord_connect` via `self.after(1200, ...)` so the bot connects automatically.
+
+**Discord-specific prompt cache:** `_discord_prompt_cache` / `_discord_prompt_lock` mirror the main `_prompt_cache` / `_prompt_lock` pattern — the prompt textbox is a Tcl widget and cannot be read from a worker thread. The cache is synced in `_poll_logs` alongside the main prompt. When "Use shared AI prompt" is checked, `_get_discord_cfg` returns an empty string (resolved to `None` inside `DiscordClient`, which then falls back to the main system prompt).
+
+**Status label:** `_lbl_discord_status` in the header bar shows `Discord: ● Off / Connecting… / Online / Error` (column 5, next to the Twitch status label). `_on_ready_cb` / `_on_failure_cb` callbacks update it from the GUI thread via `self.after(0, ...)`.
+
+**UI controls** (Connection Settings → Discord Bot tab):
+- Bot Token, Channel ID entry fields
+- Trigger mode combobox
+- "Enable Message Content Intent" warning label
+- "Use shared AI prompt" checkbox — hides/shows the Discord-specific prompt textbox
+- Connect / Disconnect buttons
+
 ## Settings persistence (`.env`)
 
-Connection fields (channel, username, token, LLM endpoint/model, Piper paths) are saved to `.env` next to the script whenever the user clicks **Connect**. On next launch, `_load_env()` parses the file before `_build_ui()` runs so `_build_connection` can pre-fill the entries.
+Connection fields are saved to `.env` next to the script whenever the user clicks **Connect** (Twitch) or **Connect Discord** (Discord). On next launch, `_load_env()` parses the file before `_build_ui()` runs so `_build_connection` can pre-fill the entries.
 
 `.env` is in `.gitignore` — credentials are never committed.
 
-`.env` key names: `TWITCH_CHANNEL`, `TWITCH_USERNAME`, `TWITCH_TOKEN`, `LLM_PROVIDER`, `LLM_ENDPOINT`, `LLM_MODEL`, `LLM_API_KEY`, `PIPER_EXE`, `PIPER_MODEL`, `PIPER_CONFIG`.
+`.env` key names:
+- Twitch: `TWITCH_CHANNEL`, `TWITCH_USERNAME`, `TWITCH_TOKEN`
+- LLM: `LLM_PROVIDER`, `LLM_ENDPOINT`, `LLM_MODEL`, `LLM_API_KEY`
+- Piper: `PIPER_EXE`, `PIPER_MODEL`, `PIPER_CONFIG`
+- Discord: `DISCORD_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_TRIGGER`, `DISCORD_USE_SHARED_PROMPT`, `DISCORD_PROMPT`
 
 ## AI providers
 
@@ -90,7 +121,7 @@ Changing provider auto-fills the endpoint and calls Refresh on the model dropdow
 
 The app has no tabs. Layout is:
 
-- **Row 0** — `_build_header()`: fixed 48 px header bar with title, Connect/Disconnect buttons, and status label.
+- **Row 0** — `_build_header()`: fixed 48 px header bar with title, Connect/Disconnect buttons, Twitch status label, and Discord status label (`_lbl_discord_status`, column 5).
 - **Row 1** — two-column `CTkFrame`: left = Twitch Plays (`_build_plays`), right = AI Interaction (`_build_ai`).
 - **Row 2** — console label bar + Clear button (`_build_console_section`).
 - **Row 3** — `CTkTextbox` console (height=190, read-only).

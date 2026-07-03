@@ -7,7 +7,7 @@
   "min_bits": 100,
   "trigger_points": false,
   "reward_id": "",
-  "tts_ai": true,
+  "tts_ai": false,
   "plays_enabled": false,
   "command_map": {},
   "last_prompt": "Test"
