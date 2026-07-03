@@ -993,7 +993,7 @@ class TwitchBotApp(ctk.CTk):
 
         self._prompt_combo = ctk.CTkComboBox(
             ctrl_bar, width=200,
-            values=self._list_prompts(),
+            values=self._prompt_values(),
             command=self._on_prompt_selected,
         )
         self._prompt_combo.set("")
@@ -1003,12 +1003,6 @@ class TwitchBotApp(ctk.CTk):
             ctrl_bar, text="Save", width=80,
             command=self._save_prompt,
         ).pack(side="left")
-
-        ctk.CTkButton(
-            ctrl_bar, text="+ New", width=70,
-            fg_color=_GREEN[0], hover_color=_GREEN[1],
-            command=self._new_prompt,
-        ).pack(side="left", padx=(6, 0))
 
         self._system_prompt = ctk.CTkTextbox(
             tab, font=ctk.CTkFont(family="Courier", size=12),
@@ -1437,6 +1431,7 @@ class TwitchBotApp(ctk.CTk):
         self.command_map = {k: v for k, v in s.get("command_map", {}).items()}
         self._refresh_plays()
         # Restore last loaded prompt
+        self._prompt_combo.configure(values=self._prompt_values())
         last = s.get("last_prompt", "")
         if last:
             self._prompt_combo.set(last)
@@ -1516,8 +1511,14 @@ class TwitchBotApp(ctk.CTk):
             return []
         return sorted(f[:-4] for f in os.listdir(self._prompts_dir) if f.endswith(".txt"))
 
+    def _prompt_values(self) -> list[str]:
+        """Dropdown values: special New entry first, then existing prompts."""
+        return ["+ New Prompt"] + self._list_prompts()
+
     def _on_prompt_selected(self, name: str) -> None:
-        """Load a prompt when the user picks one from the dropdown."""
+        if name == "+ New Prompt":
+            self._new_prompt()
+            return
         if not name:
             return
         path = os.path.join(self._prompts_dir, f"{name}.txt")
@@ -1532,8 +1533,8 @@ class TwitchBotApp(ctk.CTk):
 
     def _save_prompt(self) -> None:
         name = self._prompt_combo.get().strip()
-        if not name:
-            self._log("[Prompts] Type a name in the prompt box first.")
+        if not name or name == "+ New Prompt":
+            self._log("[Prompts] Select or type a prompt name first.")
             return
         safe = re.sub(r'[^\w\s\-]', '', name).strip()
         if not safe:
@@ -1543,8 +1544,7 @@ class TwitchBotApp(ctk.CTk):
         content = self._system_prompt.get("1.0", "end-1c")
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
-        # Refresh dropdown and keep the saved name selected
-        self._prompt_combo.configure(values=self._list_prompts())
+        self._prompt_combo.configure(values=self._prompt_values())
         self._prompt_combo.set(safe)
         self._log(f"[Prompts] Saved → {safe}")
 
@@ -1552,13 +1552,17 @@ class TwitchBotApp(ctk.CTk):
         dialog = ctk.CTkInputDialog(text="Name for new prompt:", title="New Prompt")
         name = dialog.get_input()
         if not name:
+            self._prompt_combo.configure(values=self._prompt_values())
+            self._prompt_combo.set("")
             return
         safe = re.sub(r'[^\w\s\-]', '', name.strip()).strip()
         if not safe:
             self._log("[Prompts] Invalid name — use letters, numbers, spaces, or dashes.")
+            self._prompt_combo.configure(values=self._prompt_values())
+            self._prompt_combo.set("")
             return
         self._system_prompt.delete("1.0", "end")
-        self._prompt_combo.configure(values=self._list_prompts())
+        self._prompt_combo.configure(values=self._prompt_values())
         self._prompt_combo.set(safe)
         self._sync_prompt_cache()
         self._log(f"[Prompts] New prompt '{safe}' — edit and click Save.")
