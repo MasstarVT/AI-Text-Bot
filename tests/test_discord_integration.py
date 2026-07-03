@@ -15,11 +15,7 @@ class TestAIHandlerReplyCallback(unittest.TestCase):
         import sys, os
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-        # Patch customtkinter before importing twitch_bot (it needs a display)
-        with patch.dict("sys.modules", {"customtkinter": MagicMock()}):
-            import importlib
-            import twitch_bot
-            importlib.reload(twitch_bot)
+        import twitch_bot
 
         cfg = {
             "provider": "Ollama",
@@ -140,10 +136,7 @@ class TestDiscordClientTriggerMode(unittest.TestCase):
         """Mirror of DiscordClient._is_triggered static method."""
         import sys, os
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-        with patch.dict("sys.modules", {"customtkinter": MagicMock()}):
-            import importlib
-            import twitch_bot
-            importlib.reload(twitch_bot)
+        import twitch_bot
         return twitch_bot.DiscordClient._is_triggered(trigger, bot_user, message)
 
     def test_all_messages_always_triggers(self):
