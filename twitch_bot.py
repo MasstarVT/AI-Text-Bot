@@ -743,1054 +743,14 @@ class DiscordClient:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TwitchBotApp  (main window)
+# WebApp  (replaces TwitchBotApp)
 # ══════════════════════════════════════════════════════════════════════════════
-class TwitchBotApp(ctk.CTk):
+class WebApp:
     """
-    Main application window.  All GUI construction, event routing, and
-    service lifecycle management lives here.
+    Owns all service instances and the Flask web server.
+    All state lives in _config (protected by _config_lock).
+    Background threads communicate via _log() which fans out to SSE clients.
     """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.title("Twitch Interactive Bot")
-        self.geometry("1140x780")
-        self.minsize(960, 640)
-
-        # Paths next to this script
-        _here = os.path.dirname(os.path.abspath(__file__))
-        self._prompts_dir   = os.path.join(_here, "prompts")
-        self._env_path      = os.path.join(_here, ".env")
-        self._settings_path = os.path.join(_here, "settings.json")
-        os.makedirs(self._prompts_dir, exist_ok=True)
-        self._presets_dir = os.path.join(_here, "plays_presets")
-        os.makedirs(self._presets_dir, exist_ok=True)
-
-        # Load persisted connection settings (populated before _build_ui so
-        # _build_connection can use them as field defaults)
-        self._env = self._load_env()
-
-        # Runtime toggle state
-        self.game_input_enabled = ctk.BooleanVar(value=False)
-        self.ai_enabled         = ctk.BooleanVar(value=False)
-
-        # Command map: {"!cmd": {"key": str, "duration": float}}
-        self.command_map: dict[str, dict] = {}
-
-        # AI message counter (how many messages since last AI response)
-        self._ai_counter = 0
-
-        # Thread-safe log queue — only the GUI thread reads from it
-        self._log_queue: queue.Queue[str] = queue.Queue()
-
-        # Thread-safe system-prompt cache: written by GUI thread, read by AI worker
-        self._prompt_lock:  threading.Lock = threading.Lock()
-        self._prompt_cache: str = ""
-
-        # Discord-specific prompt cache (same thread-safety pattern as _prompt_cache)
-        self._discord_prompt_lock:  threading.Lock = threading.Lock()
-        self._discord_prompt_cache: str = ""
-
-        # Service handles
-        self._irc:     TwitchIRCClient | None = None
-        self._tts:     TTSEngine | None = None
-        self._ai:      AIResponseHandler | None = None
-        self._discord: DiscordClient | None = None
-
-        self._build_ui()
-        self._apply_settings(self._load_settings())
-        self._start_services()
-        self._poll_logs()
-
-        self._log("[System] Ready.")
-        self._log_platform_info()
-
-        # Auto-save settings every 10 seconds so state persists even if
-        # the process is killed rather than closed gracefully
-        self._autosave()
-
-        # Auto-connect if all credentials are already saved
-        if all(self._env.get(k) for k in ("TWITCH_CHANNEL", "TWITCH_USERNAME", "TWITCH_TOKEN")):
-            self.after(800, self._connect)
-        if self._env.get("DISCORD_TOKEN") and self._env.get("DISCORD_CHANNEL_ID"):
-            self.after(1200, self._discord_connect)
-
-    # ── Platform diagnostics ─────────────────────────────────────────────────
-
-    def _log_platform_info(self) -> None:
-        libs = []
-        libs.append("pygame ✓" if HAS_PYGAME else "pygame ✗ (no audio)")
-        libs.append("pydirectinput ✓" if HAS_PYDIRECTINPUT else "pydirectinput ✗")
-        libs.append("pynput ✓" if HAS_PYNPUT else "pynput ✗")
-        self._log(f"[System] Libraries: {', '.join(libs)}")
-        if not HAS_PYDIRECTINPUT and not HAS_PYNPUT:
-            self._log("[System] WARNING: No input library found — Twitch Plays disabled.")
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # UI Construction
-    # ══════════════════════════════════════════════════════════════════════════
-
-    def _build_ui(self) -> None:
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
-
-        self._build_header()
-        self._create_settings_window()
-
-        main = ctk.CTkFrame(self, fg_color="transparent")
-        main.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 4))
-        main.grid_columnconfigure(0, weight=1)
-        main.grid_columnconfigure(1, weight=1)
-        main.grid_rowconfigure(0, weight=1)
-
-        plays_frame = ctk.CTkFrame(main, corner_radius=8)
-        plays_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
-        self._build_plays(plays_frame)
-
-        ai_frame = ctk.CTkFrame(main, corner_radius=8)
-        ai_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
-        self._build_ai(ai_frame)
-
-        self._build_console_section()
-
-    # ── Connection tab ────────────────────────────────────────────────────────
-
-    def _build_connection(self, tab: ctk.CTkFrame) -> None:
-        tab.grid_columnconfigure(1, weight=1)
-        r = 0
-
-        def section(title: str) -> None:
-            nonlocal r
-            ctk.CTkLabel(
-                tab, text=title,
-                font=ctk.CTkFont(size=13, weight="bold"),
-                text_color="#6fa3d0",
-            ).grid(row=r, column=0, columnspan=3, sticky="w", padx=14, pady=(18, 4))
-            r += 1
-
-        def field(label: str, attr: str, default: str = "", placeholder: str = "",
-                  secret: bool = False) -> None:
-            nonlocal r
-            ctk.CTkLabel(tab, text=label, anchor="e").grid(
-                row=r, column=0, sticky="e", padx=(14, 8), pady=5)
-            e = ctk.CTkEntry(
-                tab,
-                placeholder_text=placeholder,
-                width=450,
-                show="●" if secret else "",
-            )
-            if default:
-                e.insert(0, default)
-            e.grid(row=r, column=1, sticky="ew", padx=(0, 14), pady=5)
-            setattr(self, attr, e)
-            r += 1
-
-        def file_field(label: str, attr: str, placeholder: str = "", default: str = "") -> None:
-            nonlocal r
-            ctk.CTkLabel(tab, text=label, anchor="e").grid(
-                row=r, column=0, sticky="e", padx=(14, 8), pady=5)
-            fr = ctk.CTkFrame(tab, fg_color="transparent")
-            fr.grid(row=r, column=1, sticky="ew", padx=(0, 14), pady=5)
-            fr.grid_columnconfigure(0, weight=1)
-            e = ctk.CTkEntry(fr, placeholder_text=placeholder)
-            if default:
-                e.insert(0, default)
-            e.grid(row=0, column=0, sticky="ew")
-            ctk.CTkButton(
-                fr, text="Browse", width=74,
-                command=lambda _e=e: self._browse(_e),
-            ).grid(row=0, column=1, padx=(6, 0))
-            setattr(self, attr, e)
-            r += 1
-
-        e = self._env  # shorthand
-
-        # ── Twitch IRC ────────────────────────────────────────────────────────
-        section("Twitch IRC")
-        field("Channel",      "e_channel",
-              default=e.get("TWITCH_CHANNEL", ""),  placeholder="channelname")
-        field("Bot Username", "e_username",
-              default=e.get("TWITCH_USERNAME", ""), placeholder="mybotname")
-
-        # Client ID row — entry + "Get OAuth Token" button on the same line
-        ctk.CTkLabel(tab, text="Client ID", anchor="e").grid(
-            row=r, column=0, sticky="e", padx=(14, 8), pady=5)
-        cid_frame = ctk.CTkFrame(tab, fg_color="transparent")
-        cid_frame.grid(row=r, column=1, sticky="ew", padx=(0, 14), pady=5)
-        cid_frame.grid_columnconfigure(0, weight=1)
-        self.e_client_id = ctk.CTkEntry(
-            cid_frame, placeholder_text="your Twitch app client ID")
-        if e.get("TWITCH_CLIENT_ID"):
-            self.e_client_id.insert(0, e["TWITCH_CLIENT_ID"])
-        self.e_client_id.grid(row=0, column=0, sticky="ew")
-        ctk.CTkButton(
-            cid_frame, text="Get OAuth Token ↗", width=160,
-            command=self._get_oauth_token,
-        ).grid(row=0, column=1, padx=(8, 0))
-        r += 1
-
-        field("OAuth Token",  "e_token",
-              default=e.get("TWITCH_TOKEN", ""),
-              placeholder="oauth:xxxxxxxxxxxxxxxx", secret=True)
-
-        # ── AI Provider ───────────────────────────────────────────────────────
-        section("AI Provider")
-
-        # Provider selector
-        _saved_provider = e.get("LLM_PROVIDER", "Ollama")
-        if _saved_provider not in _PROVIDERS:
-            _saved_provider = "Ollama"
-        ctk.CTkLabel(tab, text="Provider", anchor="e").grid(
-            row=r, column=0, sticky="e", padx=(14, 8), pady=5)
-        self._provider_combo = ctk.CTkComboBox(
-            tab, values=list(_PROVIDERS.keys()), width=200,
-            command=self._on_provider_change,
-        )
-        self._provider_combo.set(_saved_provider)
-        self._provider_combo.grid(row=r, column=1, sticky="w", padx=(0, 14), pady=5)
-        r += 1
-
-        # API Key (hidden for local providers)
-        self._api_key_lbl = ctk.CTkLabel(tab, text="API Key", anchor="e")
-        self._api_key_lbl.grid(row=r, column=0, sticky="e", padx=(14, 8), pady=5)
-        self.e_api_key = ctk.CTkEntry(tab, width=450, show="●",
-                                      placeholder_text="sk-... / AIza... / xai-...")
-        if e.get("LLM_API_KEY"):
-            self.e_api_key.insert(0, e["LLM_API_KEY"])
-        self.e_api_key.grid(row=r, column=1, sticky="ew", padx=(0, 14), pady=5)
-        self._api_key_row = r
-        r += 1
-
-        # Endpoint
-        field(
-            "API Endpoint", "e_endpoint",
-            default=e.get("LLM_ENDPOINT", "http://localhost:11434/v1/chat/completions"),
-            placeholder="http://localhost:11434/v1/chat/completions",
-        )
-
-        # Model — combo populated by _fetch_models()
-        ctk.CTkLabel(tab, text="Model Name", anchor="e").grid(
-            row=r, column=0, sticky="e", padx=(14, 8), pady=5)
-        _mf = ctk.CTkFrame(tab, fg_color="transparent")
-        _mf.grid(row=r, column=1, sticky="ew", padx=(0, 14), pady=5)
-        _mf.grid_columnconfigure(0, weight=1)
-        _saved_model = e.get("LLM_MODEL", "llama3") or "llama3"
-        self.e_model = ctk.CTkComboBox(_mf, values=[_saved_model], width=300)
-        self.e_model.set(_saved_model)
-        self.e_model.grid(row=0, column=0, sticky="ew")
-        ctk.CTkButton(
-            _mf, text="Refresh", width=74,
-            command=self._fetch_models,
-        ).grid(row=0, column=1, padx=(6, 0))
-        r += 1
-
-        # Apply initial show/hide for API key based on saved provider
-        self._set_api_key_visibility(_PROVIDERS[_saved_provider]["needs_key"])
-
-        # ── Piper TTS ─────────────────────────────────────────────────────────
-        # Auto-detect the bundled piper binary when no .env entry exists yet
-        _local_piper = os.path.join(os.path.dirname(self._env_path), "piper", "piper")
-        _default_piper = _local_piper if os.path.exists(_local_piper) else ""
-
-        section("Piper TTS")
-        file_field("Piper Executable",     "e_piper_exe",
-                   placeholder="piper  or  /path/to/piper",
-                   default=e.get("PIPER_EXE") or _default_piper)
-        file_field("Voice Model  (.onnx)", "e_piper_model",
-                   placeholder="/path/to/voice.onnx",
-                   default=e.get("PIPER_MODEL", ""))
-        file_field("Model Config (.json)", "e_piper_cfg",
-                   placeholder="/path/to/voice.onnx.json  (optional)",
-                   default=e.get("PIPER_CONFIG", ""))
-
-        # Connect / Disconnect live in the main window header bar
-
-        # ── Discord Bot ───────────────────────────────────────────────────────
-        section("Discord Bot")
-
-        field("Bot Token",  "e_discord_token",
-              default=e.get("DISCORD_TOKEN", ""),
-              placeholder="Bot xxxxxxxxxxxxxxxxxxxx…", secret=True)
-        field("Channel ID", "e_discord_channel_id",
-              default=e.get("DISCORD_CHANNEL_ID", ""),
-              placeholder="123456789012345678")
-
-        # Trigger mode dropdown
-        ctk.CTkLabel(tab, text="Trigger Mode", anchor="e").grid(
-            row=r, column=0, sticky="e", padx=(14, 8), pady=5)
-        _saved_trigger = e.get("DISCORD_TRIGGER", DiscordClient.TRIGGER_MODES[0])
-        if _saved_trigger not in DiscordClient.TRIGGER_MODES:
-            _saved_trigger = DiscordClient.TRIGGER_MODES[0]
-        self._discord_trigger_combo = ctk.CTkComboBox(
-            tab, values=DiscordClient.TRIGGER_MODES, width=280,
-        )
-        self._discord_trigger_combo.set(_saved_trigger)
-        self._discord_trigger_combo.grid(row=r, column=1, sticky="w", padx=(0, 14), pady=5)
-        r += 1
-
-        ctk.CTkLabel(
-            tab,
-            text="⚠ Enable 'Message Content Intent' in your bot's Discord Developer Portal settings",
-            text_color="#f39c12",
-            font=ctk.CTkFont(size=11),
-            anchor="w",
-        ).grid(row=r, column=0, columnspan=2, sticky="w", padx=14, pady=(0, 4))
-        r += 1
-
-        # Shared prompt toggle
-        ctk.CTkLabel(tab, text="System Prompt", anchor="e").grid(
-            row=r, column=0, sticky="ne", padx=(14, 8), pady=(8, 2))
-        _saved_shared = e.get("DISCORD_USE_SHARED_PROMPT", "true").lower() != "false"
-        self._var_discord_shared_prompt = ctk.BooleanVar(value=_saved_shared)
-        _prompt_frame = ctk.CTkFrame(tab, fg_color="transparent")
-        _prompt_frame.grid(row=r, column=1, sticky="ew", padx=(0, 14), pady=5)
-        _prompt_frame.grid_columnconfigure(0, weight=1)
-        ctk.CTkCheckBox(
-            _prompt_frame, text="Use shared Twitch prompt",
-            variable=self._var_discord_shared_prompt,
-            command=self._toggle_discord_prompt_box,
-        ).grid(row=0, column=0, sticky="w")
-        r += 1
-
-        # Discord-specific prompt textbox (hidden when shared prompt is active)
-        self._discord_prompt_box = ctk.CTkTextbox(tab, height=80)
-        _saved_dprompt = e.get("DISCORD_PROMPT", "")
-        if _saved_dprompt:
-            self._discord_prompt_box.insert("1.0", _saved_dprompt)
-        self._discord_prompt_box.grid(
-            row=r, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 4))
-        r += 1
-
-        # Hide prompt box if using shared prompt
-        if _saved_shared:
-            self._discord_prompt_box.grid_remove()
-
-        ctk.CTkLabel(
-            tab,
-            text="Use the Discord / Discord Off buttons in the header bar to connect.",
-            text_color="#888888",
-            font=ctk.CTkFont(size=11),
-            anchor="w",
-        ).grid(row=r, column=0, columnspan=2, sticky="w", padx=14, pady=(4, 10))
-        r += 1
-
-    def _toggle_discord_prompt_box(self) -> None:
-        if self._var_discord_shared_prompt.get():
-            self._discord_prompt_box.grid_remove()
-        else:
-            self._discord_prompt_box.grid()
-
-    # ── Twitch Plays tab ──────────────────────────────────────────────────────
-
-    def _build_plays(self, tab: ctk.CTkFrame) -> None:
-        tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(3, weight=1)
-
-        # Master toggle
-        hdr = ctk.CTkFrame(tab, corner_radius=8)
-        hdr.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
-        ctk.CTkLabel(
-            hdr, text="Game Inputs Active",
-            font=ctk.CTkFont(size=14, weight="bold"),
-        ).pack(side="left", padx=14, pady=10)
-        ctk.CTkSwitch(
-            hdr, text="",
-            variable=self.game_input_enabled,
-            onvalue=True, offvalue=False,
-        ).pack(side="left")
-        self._lbl_plays = ctk.CTkLabel(
-            hdr, text="OFF", text_color=OFF_FG,
-            font=ctk.CTkFont(size=13, weight="bold"),
-        )
-        self._lbl_plays.pack(side="left", padx=10)
-        self.game_input_enabled.trace_add(
-            "write",
-            lambda *_: self._lbl_plays.configure(
-                text="ON"  if self.game_input_enabled.get() else "OFF",
-                text_color=ON_FG if self.game_input_enabled.get() else OFF_FG,
-            ),
-        )
-
-        # Preset bar
-        preset_bar = ctk.CTkFrame(tab, corner_radius=8)
-        preset_bar.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
-
-        ctk.CTkLabel(preset_bar, text="Preset:").pack(side="left", padx=(14, 4), pady=10)
-        self._preset_combo = ctk.CTkComboBox(
-            preset_bar,
-            values=self._preset_values(),
-            command=self._on_preset_selected,
-            width=180,
-        )
-        self._preset_combo.set("")
-        self._preset_combo.pack(side="left", padx=4)
-
-        ctk.CTkButton(
-            preset_bar, text="Save", width=80,
-            command=self._save_preset,
-        ).pack(side="left", padx=10)
-
-        # Add-mapping controls
-        add = ctk.CTkFrame(tab, corner_radius=8)
-        add.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 6))
-
-        ctk.CTkLabel(add, text="Command:").pack(side="left", padx=(14, 4), pady=10)
-        self._e_new_cmd = ctk.CTkEntry(add, placeholder_text="!jump", width=110)
-        self._e_new_cmd.pack(side="left", padx=4)
-
-        ctk.CTkLabel(add, text="Key:").pack(side="left", padx=(10, 4))
-        self._e_new_key = ctk.CTkEntry(add, placeholder_text="space", width=90)
-        self._e_new_key.pack(side="left", padx=4)
-
-        ctk.CTkLabel(add, text="Hold (s):").pack(side="left", padx=(10, 4))
-        self._e_new_dur = ctk.CTkEntry(add, placeholder_text="0.5", width=65)
-        self._e_new_dur.pack(side="left", padx=4)
-
-        ctk.CTkButton(
-            add, text="+ Add Mapping", width=130,
-            fg_color=_GREEN[0], hover_color=_GREEN[1],
-            command=self._add_mapping,
-        ).pack(side="left", padx=14)
-
-        # Scrollable command list
-        self._plays_scroll = ctk.CTkScrollableFrame(
-            tab, label_text="Active Command Mappings",
-        )
-        self._plays_scroll.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
-        self._plays_scroll.grid_columnconfigure(0, weight=1)
-        self._refresh_plays()
-
-    # ── AI Interaction tab ────────────────────────────────────────────────────
-
-    def _build_ai(self, tab: ctk.CTkFrame) -> None:
-        tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(3, weight=1)
-
-        # Master toggle
-        hdr = ctk.CTkFrame(tab, corner_radius=8)
-        hdr.grid(row=0, column=0, sticky="ew", padx=10, pady=10)
-        ctk.CTkLabel(
-            hdr, text="AI Chat Reading Active",
-            font=ctk.CTkFont(size=14, weight="bold"),
-        ).pack(side="left", padx=14, pady=10)
-        ctk.CTkSwitch(
-            hdr, text="",
-            variable=self.ai_enabled,
-            onvalue=True, offvalue=False,
-        ).pack(side="left")
-        self._lbl_ai = ctk.CTkLabel(
-            hdr, text="OFF", text_color=OFF_FG,
-            font=ctk.CTkFont(size=13, weight="bold"),
-        )
-        self._lbl_ai.pack(side="left", padx=10)
-        self.ai_enabled.trace_add(
-            "write",
-            lambda *_: self._lbl_ai.configure(
-                text="ON"  if self.ai_enabled.get() else "OFF",
-                text_color=ON_FG if self.ai_enabled.get() else OFF_FG,
-            ),
-        )
-
-        # Trigger Conditions
-        opts = ctk.CTkFrame(tab, corner_radius=8)
-        opts.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
-        opts.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            opts, text="Trigger Conditions",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            text_color="#6fa3d0",
-        ).grid(row=0, column=0, sticky="w", padx=14, pady=(10, 6))
-
-        # Every N messages
-        row_n = ctk.CTkFrame(opts, fg_color="transparent")
-        row_n.grid(row=1, column=0, sticky="w", padx=14, pady=3)
-        self._var_every_n_enabled = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(row_n, text="Every", variable=self._var_every_n_enabled,
-                        width=78).pack(side="left")
-        self._e_every_n = ctk.CTkEntry(row_n, width=55)
-        self._e_every_n.insert(0, "5")
-        self._e_every_n.pack(side="left", padx=6)
-        ctk.CTkLabel(row_n, text="messages").pack(side="left")
-
-        # @bot mentions
-        row_m = ctk.CTkFrame(opts, fg_color="transparent")
-        row_m.grid(row=2, column=0, sticky="w", padx=14, pady=3)
-        self._var_mentions = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(row_m, text="@bot mentions", variable=self._var_mentions).pack(side="left")
-
-        # Bits cheer
-        row_b = ctk.CTkFrame(opts, fg_color="transparent")
-        row_b.grid(row=3, column=0, sticky="w", padx=14, pady=3)
-        self._var_trigger_bits = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(row_b, text="Bits cheer  ≥",
-                        variable=self._var_trigger_bits, width=138).pack(side="left")
-        self._e_min_bits = ctk.CTkEntry(row_b, width=65, placeholder_text="100")
-        self._e_min_bits.pack(side="left", padx=6)
-        ctk.CTkLabel(row_b, text="bits").pack(side="left")
-
-        # Channel Point redeem
-        row_p = ctk.CTkFrame(opts, fg_color="transparent")
-        row_p.grid(row=4, column=0, sticky="w", padx=14, pady=(6, 2))
-        self._var_trigger_points = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(row_p, text="Channel Point redeem",
-                        variable=self._var_trigger_points).pack(side="left")
-
-        row_pid = ctk.CTkFrame(opts, fg_color="transparent")
-        row_pid.grid(row=5, column=0, sticky="ew", padx=(42, 14), pady=(2, 0))
-        row_pid.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(row_pid, text="Reward ID:", anchor="e").grid(
-            row=0, column=0, sticky="e", padx=(0, 8))
-        self._e_reward_id = ctk.CTkEntry(
-            row_pid, placeholder_text="leave blank for any redemption")
-        self._e_reward_id.grid(row=0, column=1, sticky="ew")
-
-        ctk.CTkLabel(
-            opts,
-            text="Tip: reward IDs are logged to the Console tab when a redemption arrives.",
-            text_color="gray", font=ctk.CTkFont(size=11),
-        ).grid(row=6, column=0, sticky="w", padx=(42, 14), pady=(2, 8))
-
-        # Divider
-        ctk.CTkFrame(opts, height=1, fg_color="#333").grid(
-            row=7, column=0, sticky="ew", padx=14, pady=4)
-
-        # TTS option
-        row_tts = ctk.CTkFrame(opts, fg_color="transparent")
-        row_tts.grid(row=8, column=0, sticky="w", padx=14, pady=(4, 10))
-        self._var_tts_ai = ctk.BooleanVar(value=True)
-        ctk.CTkLabel(row_tts, text="Speak AI replies via TTS:").pack(side="left", padx=(0, 8))
-        ctk.CTkCheckBox(row_tts, text="", variable=self._var_tts_ai).pack(side="left")
-
-        # System prompt header with dropdown + save
-        prompt_hdr = ctk.CTkFrame(tab, fg_color="transparent")
-        prompt_hdr.grid(row=2, column=0, sticky="ew", padx=10, pady=(8, 2))
-        prompt_hdr.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            prompt_hdr, text="System Prompt",
-            font=ctk.CTkFont(size=13, weight="bold"),
-        ).grid(row=0, column=0, sticky="w", padx=4)
-
-        ctrl_bar = ctk.CTkFrame(prompt_hdr, fg_color="transparent")
-        ctrl_bar.grid(row=0, column=1, sticky="e")
-
-        self._prompt_combo = ctk.CTkComboBox(
-            ctrl_bar, width=200,
-            values=self._prompt_values(),
-            command=self._on_prompt_selected,
-        )
-        self._prompt_combo.set("")
-        self._prompt_combo.pack(side="left", padx=(0, 6))
-
-        ctk.CTkButton(
-            ctrl_bar, text="Save", width=80,
-            command=self._save_prompt,
-        ).pack(side="left")
-
-        self._system_prompt = ctk.CTkTextbox(
-            tab, font=ctk.CTkFont(family="Courier", size=12),
-        )
-        self._system_prompt.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
-        self._system_prompt.insert(
-            "1.0",
-            "You are an energetic Twitch chat bot named ChatBot. "
-            "You read chat messages and respond in 1-2 short, lively sentences. "
-            "Be hype, funny, and keep it PG-13. "
-            "Never start a reply with 'Sure', 'Of course', or 'Certainly'.",
-        )
-
-    # ── Header bar ────────────────────────────────────────────────────────────
-
-    def _build_header(self) -> None:
-        hdr = ctk.CTkFrame(self, corner_radius=0, height=48)
-        hdr.grid(row=0, column=0, sticky="ew")
-        hdr.grid_propagate(False)
-        hdr.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            hdr, text="Twitch Interactive Bot",
-            font=ctk.CTkFont(size=14, weight="bold"),
-        ).grid(row=0, column=0, sticky="w", padx=16, pady=10)
-
-        self._lbl_conn_status = ctk.CTkLabel(
-            hdr, text="Twitch: ● Off", text_color=OFF_FG,
-            font=ctk.CTkFont(size=12),
-        )
-        self._lbl_conn_status.grid(row=0, column=4, padx=(0, 8), pady=10)
-
-        self._btn_discord_connect = ctk.CTkButton(
-            hdr, text="Discord", width=90,
-            fg_color=_GREEN[0], hover_color=_GREEN[1],
-            command=self._discord_connect,
-        )
-        self._btn_discord_connect.grid(row=0, column=5, padx=(0, 4), pady=10)
-
-        self._btn_discord_disconnect = ctk.CTkButton(
-            hdr, text="Discord Off", width=100, state="disabled",
-            fg_color=_RED[0], hover_color=_RED[1],
-            command=self._discord_disconnect,
-        )
-        self._btn_discord_disconnect.grid(row=0, column=6, padx=(0, 8), pady=10)
-
-        self._lbl_discord_status = ctk.CTkLabel(
-            hdr, text="Discord: ● Off", text_color=OFF_FG,
-            font=ctk.CTkFont(size=12),
-        )
-        self._lbl_discord_status.grid(row=0, column=7, padx=(0, 14), pady=10)
-
-        self._btn_disconnect = ctk.CTkButton(
-            hdr, text="Disconnect", width=120, state="disabled",
-            fg_color=_RED[0], hover_color=_RED[1],
-            command=self._disconnect,
-        )
-        self._btn_disconnect.grid(row=0, column=3, padx=(0, 8), pady=10)
-
-        self._btn_connect = ctk.CTkButton(
-            hdr, text="Connect", width=110,
-            fg_color=_GREEN[0], hover_color=_GREEN[1],
-            command=self._connect,
-        )
-        self._btn_connect.grid(row=0, column=2, padx=(0, 6), pady=10)
-
-        ctk.CTkButton(
-            hdr, text="⏹ Panic", width=90,
-            fg_color="#8b0000", hover_color="#b22222",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            command=self._panic_tts,
-        ).grid(row=0, column=1, padx=(0, 10), pady=10)
-
-    # ── Settings window (hidden until cog is clicked) ─────────────────────────
-
-    def _create_settings_window(self) -> None:
-        win = ctk.CTkToplevel(self)
-        win.title("Connection Settings")
-        win.geometry("640x700")
-        win.resizable(False, True)
-        win.transient(self)
-        win.protocol("WM_DELETE_WINDOW", win.withdraw)
-        self._settings_win = win
-
-        win.grid_columnconfigure(0, weight=1)
-        win.grid_rowconfigure(0, weight=1)
-        inner = ctk.CTkFrame(win, fg_color="transparent")
-        inner.grid(row=0, column=0, sticky="nsew")
-        inner.grid_columnconfigure(1, weight=1)
-        self._build_connection(inner)
-
-        win.withdraw()
-
-    def _open_settings(self) -> None:
-        self._settings_win.deiconify()
-        self._settings_win.lift()
-        self._settings_win.focus()
-
-    # ── Console section (pinned to bottom of main window) ─────────────────────
-
-    def _build_console_section(self) -> None:
-        bar = ctk.CTkFrame(self, fg_color="transparent")
-        bar.grid(row=2, column=0, sticky="ew", padx=10, pady=(4, 0))
-        bar.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            bar, text="Console",
-            font=ctk.CTkFont(size=12, weight="bold"),
-        ).grid(row=0, column=0, sticky="w")
-        ctk.CTkButton(
-            bar, text="Clear Console", width=120,
-            command=self._clear_console,
-        ).grid(row=0, column=1)
-
-        self._console = ctk.CTkTextbox(
-            self, height=190,
-            state="disabled",
-            font=ctk.CTkFont(family="Courier", size=12),
-            text_color="#c8c8c8",
-            wrap="word",
-        )
-        self._console.grid(row=3, column=0, sticky="ew", padx=10, pady=(2, 0))
-
-        self._build_manual_prompt()
-
-        footer = ctk.CTkFrame(self, fg_color="transparent")
-        footer.grid(row=5, column=0, sticky="ew", padx=10, pady=(6, 8))
-
-        ctk.CTkButton(
-            footer, text="⚙", width=38, height=32,
-            font=ctk.CTkFont(size=15),
-            fg_color="#2b2d42",
-            hover_color="#3d3f5c",
-            command=self._open_settings,
-        ).pack(side="left")
-        ctk.CTkLabel(
-            footer, text="Connection Settings",
-            text_color="gray", font=ctk.CTkFont(size=11),
-        ).pack(side="left", padx=8)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # Service lifecycle
-    # ══════════════════════════════════════════════════════════════════════════
-
-    def _start_services(self) -> None:
-        """Create TTS + AI handler workers using current GUI config."""
-        self._tts = TTSEngine(get_config=self._get_tts_cfg, log=self._log)
-        self._ai  = AIResponseHandler(
-            get_config=self._get_ai_cfg,
-            log=self._log,
-            tts=self._tts,
-        )
-
-    def _stop_services(self) -> None:
-        if self._discord:
-            self._discord.disconnect()
-            self._discord = None
-        if self._tts:
-            self._tts.stop()
-            self._tts = None
-        if self._ai:
-            self._ai.stop()
-            self._ai = None
-
-    # ── Config getters (called on worker threads)
-    #    CTkEntry/CTkComboBox/BooleanVar.get() are GIL-safe scalar reads.
-    #    CTkTextbox.get(index, index) is a Tcl round-trip — use _prompt_cache instead. ────
-
-    def _get_tts_cfg(self) -> dict:
-        return {
-            "piper_exe":   self.e_piper_exe.get().strip()   or "piper",
-            "model_path":  self.e_piper_model.get().strip(),
-            "config_path": self.e_piper_cfg.get().strip(),
-        }
-
-    def _get_ai_cfg(self) -> dict:
-        with self._prompt_lock:
-            prompt = self._prompt_cache
-        return {
-            "provider":      self._provider_combo.get(),
-            "endpoint":      self.e_endpoint.get().strip(),
-            "model":         self.e_model.get().strip(),
-            "api_key":       self.e_api_key.get().strip(),
-            "system_prompt": prompt,
-            "tts_ai":        self._var_tts_ai.get(),
-        }
-
-    def _sync_prompt_cache(self) -> None:
-        """Snapshot both prompt textboxes on the GUI thread for safe worker access."""
-        text = self._system_prompt.get("1.0", "end-1c")
-        with self._prompt_lock:
-            self._prompt_cache = text
-        discord_text = self._discord_prompt_box.get("1.0", "end-1c")
-        with self._discord_prompt_lock:
-            self._discord_prompt_cache = discord_text
-
-    def _get_irc_creds(self) -> dict:
-        return {
-            "channel":  self.e_channel.get().strip(),
-            "username": self.e_username.get().strip(),
-            "token":    self.e_token.get().strip(),
-        }
-
-    def _get_discord_cfg(self) -> dict:
-        use_shared = self._var_discord_shared_prompt.get()
-        if use_shared:
-            discord_prompt = ""  # empty = use shared prompt (None after or-None in DiscordClient)
-        else:
-            with self._discord_prompt_lock:
-                discord_prompt = self._discord_prompt_cache
-        return {
-            "discord_token":      self.e_discord_token.get().strip(),
-            "discord_channel_id": self.e_discord_channel_id.get().strip(),
-            "discord_trigger":    self._discord_trigger_combo.get(),
-            "discord_prompt":     discord_prompt,
-        }
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # IRC connect / disconnect
-    # ══════════════════════════════════════════════════════════════════════════
-
-    def _connect(self) -> None:
-        self._save_env(log=True)
-        self._irc = TwitchIRCClient(
-            get_creds=self._get_irc_creds,
-            log=self._log,
-            on_message=self._dispatch,
-        )
-        self._irc.connect()
-        self._btn_connect.configure(state="disabled")
-        self._btn_disconnect.configure(state="normal")
-        self._lbl_conn_status.configure(text="Twitch: ● Connecting…", text_color="#f39c12")
-
-    def _disconnect(self) -> None:
-        if self._irc:
-            self._irc.disconnect()
-            self._irc = None
-        self._btn_connect.configure(state="normal")
-        self._btn_disconnect.configure(state="disabled")
-        self._lbl_conn_status.configure(text="Twitch: ● Off", text_color=OFF_FG)
-        self._log("[System] Disconnected.")
-
-    def _discord_connect(self) -> None:
-        if self._discord:
-            self._discord.disconnect()
-        self._save_env(log=False)
-        ai = self._ai
-
-        def on_ready_cb():
-            try:
-                self.after(0, lambda: self._lbl_discord_status.configure(
-                    text="Discord: ● On", text_color=ON_FG))
-            except Exception:
-                pass
-
-        def on_failure_cb():
-            try:
-                self.after(0, self._discord_reset_ui)
-            except Exception:
-                pass
-
-        self._discord = DiscordClient(
-            get_config=self._get_discord_cfg,
-            log=self._log,
-            ai_handler=ai,
-            on_ready_cb=on_ready_cb,
-            on_failure_cb=on_failure_cb,
-        )
-        self._discord.connect()
-        self._btn_discord_connect.configure(state="disabled")
-        self._btn_discord_disconnect.configure(state="normal")
-        self._lbl_discord_status.configure(text="Discord: ● Connecting…", text_color="#f39c12")
-
-    def _discord_disconnect(self) -> None:
-        if self._discord:
-            self._discord.disconnect()
-            self._discord = None
-        self._btn_discord_connect.configure(state="normal")
-        self._btn_discord_disconnect.configure(state="disabled")
-        self._lbl_discord_status.configure(text="Discord: ● Off", text_color=OFF_FG)
-        self._log("[Discord] Disconnected.")
-
-    def _discord_reset_ui(self) -> None:
-        """Reset Discord UI to disconnected state (called after connection failure)."""
-        self._discord = None
-        self._btn_discord_connect.configure(state="normal")
-        self._btn_discord_disconnect.configure(state="disabled")
-        self._lbl_discord_status.configure(text="Discord: ● Error", text_color=OFF_FG)
-
-    def _panic_tts(self) -> None:
-        if self._tts:
-            self._tts.panic()
-        self._log("[TTS] Panic — audio stopped and queue cleared.")
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # Message dispatch  (called from IRC thread)
-    # ══════════════════════════════════════════════════════════════════════════
-
-    def _dispatch(self, username: str, message: str, bits: int = 0, reward_id: str = "") -> None:
-        """
-        Central dispatcher — routes each PRIVMSG to the Plays system and/or
-        the AI system.  Runs on the IRC background thread; must never touch
-        Tkinter widgets directly.  Use _log() which is queue-safe.
-        """
-        tag = f"  [{bits} bits]" if bits else (f"  [channel points]" if reward_id else "")
-        self._log(f"[Chat] {username}{tag}: {message}")
-        if reward_id:
-            self._log(f"[Chat] Reward ID: {reward_id}")
-        self._route_plays(username, message)
-        self._route_ai(username, message, bits, reward_id)
-
-        # Update connection status indicator the first time a message arrives
-        self.after(0, lambda: self._lbl_conn_status.configure(
-            text="Twitch: ● On", text_color=ON_FG))
-
-    def _route_plays(self, username: str, message: str) -> None:
-        word = message.strip().split()[0].lower() if message.strip() else ""
-        if word not in self.command_map or not self.game_input_enabled.get():
-            return
-        entry = self.command_map[word]
-        self._log(
-            f"[Plays] {username} → {word}  (key '{entry['key']}' × {entry['duration']}s)"
-        )
-        GameInputController(self.game_input_enabled).execute(
-            entry["key"], entry["duration"]
-        )
-
-    def _route_ai(self, username: str, message: str, bits: int = 0, reward_id: str = "") -> None:
-        if not self.ai_enabled.get():
-            return
-
-        triggered = False
-
-        if self._var_mentions.get():
-            bot = self.e_username.get().lower()
-            if bot and bot in message.lower():
-                triggered = True
-
-        if self._var_trigger_bits.get() and bits > 0:
-            try:
-                min_bits = max(1, int(self._e_min_bits.get().strip() or "1"))
-            except ValueError:
-                min_bits = 1
-            if bits >= min_bits:
-                triggered = True
-                self._log(f"[AI] Bits trigger: {username} cheered {bits} bits")
-
-        if self._var_trigger_points.get() and reward_id:
-            required = self._e_reward_id.get().strip()
-            if not required or reward_id.lower() == required.lower():
-                triggered = True
-                self._log(f"[AI] Points trigger: {username} redeemed (ID: {reward_id})")
-            else:
-                self._log(f"[AI] Unmatched redemption — reward ID: {reward_id}")
-
-        if self._var_every_n_enabled.get():
-            try:
-                every_n = max(1, int(self._e_every_n.get()))
-            except ValueError:
-                every_n = 5
-            self._ai_counter += 1
-            if self._ai_counter >= every_n:
-                self._ai_counter = 0
-                triggered = True
-
-        ai = self._ai
-        if triggered and ai:
-            ai.handle(username, message)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # Command-mapping UI
-    # ══════════════════════════════════════════════════════════════════════════
-
-    def _add_mapping(self) -> None:
-        cmd = self._e_new_cmd.get().strip().lower()
-        key = self._e_new_key.get().strip().lower()
-        try:
-            dur = float(self._e_new_dur.get().strip() or "0.3")
-        except ValueError:
-            dur = 0.3
-
-        if not cmd or not key:
-            return
-        if not cmd.startswith("!"):
-            cmd = f"!{cmd}"
-
-        self.command_map[cmd] = {"key": key, "duration": round(dur, 3)}
-        for e in (self._e_new_cmd, self._e_new_key, self._e_new_dur):
-            e.delete(0, "end")
-        self._refresh_plays()
-        self._log(f"[Plays] Added:  {cmd}  →  '{key}'  for {dur}s")
-
-    def _remove_mapping(self, cmd: str) -> None:
-        self.command_map.pop(cmd, None)
-        self._refresh_plays()
-        self._log(f"[Plays] Removed: {cmd}")
-
-    def _refresh_plays(self) -> None:
-        for w in self._plays_scroll.winfo_children():
-            w.destroy()
-
-        if not self.command_map:
-            ctk.CTkLabel(
-                self._plays_scroll,
-                text="No mappings yet.  Add one using the fields above.",
-                text_color="gray",
-            ).grid(row=0, column=0, pady=24)
-            return
-
-        for i, (cmd, info) in enumerate(sorted(self.command_map.items())):
-            row = ctk.CTkFrame(
-                self._plays_scroll,
-                fg_color=("#2b2b2b" if i % 2 == 0 else "#1f1f1f"),
-                corner_radius=6,
-            )
-            row.grid(row=i, column=0, sticky="ew", pady=2, padx=4)
-            row.grid_columnconfigure(1, weight=1)
-
-            ctk.CTkLabel(
-                row, text=cmd,
-                text_color="#3daee9",
-                font=ctk.CTkFont(family="Courier", weight="bold"),
-                width=120, anchor="w",
-            ).grid(row=0, column=0, padx=14, pady=8)
-
-            ctk.CTkLabel(
-                row,
-                text=f"→   press  '{info['key']}'   for  {info['duration']}s",
-                anchor="w",
-            ).grid(row=0, column=1, padx=6, pady=8, sticky="w")
-
-            ctk.CTkButton(
-                row, text="Remove", width=88,
-                fg_color=_RED[0], hover_color=_RED[1],
-                command=lambda c=cmd: self._remove_mapping(c),
-            ).grid(row=0, column=2, padx=12, pady=8)
-
-    def _list_presets(self) -> list[str]:
-        if not os.path.isdir(self._presets_dir):
-            return []
-        return sorted(f[:-5] for f in os.listdir(self._presets_dir) if f.endswith(".json"))
-
-    def _preset_values(self) -> list[str]:
-        return ["+ New Preset"] + self._list_presets()
-
-    def _on_preset_selected(self, name: str) -> None:
-        if name == "+ New Preset":
-            self._new_preset()
-            return
-        path = os.path.join(self._presets_dir, f"{name}.json")
-        if not os.path.exists(path):
-            self._log(f"[Presets] File not found: {name}.json")
-            return
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-            if not isinstance(data, dict):
-                raise ValueError(f"expected object, got {type(data).__name__}")
-        except Exception as e:
-            self._log(f"[Presets] Failed to load '{name}': {e}")
-            return
-        self.command_map = {k: v for k, v in data.items()}
-        self._refresh_plays()
-        self._log(f"[Presets] Loaded: {name}")
-
-    def _save_preset(self) -> None:
-        name = self._preset_combo.get().strip()
-        if not name or name == "+ New Preset":
-            self._log("[Presets] Select or type a preset name first.")
-            return
-        safe = re.sub(r'[^\w\s\-]', '', name).strip()
-        if not safe:
-            self._log("[Presets] Invalid name — use letters, numbers, spaces, or dashes.")
-            return
-        path = os.path.join(self._presets_dir, f"{safe}.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.command_map, f, indent=2)
-        self._preset_combo.configure(values=self._preset_values())
-        self._preset_combo.set(safe)
-        self._log(f"[Presets] Saved → {safe}")
-
-    def _new_preset(self) -> None:
-        dialog = ctk.CTkInputDialog(text="Name for new preset:", title="New Preset")
-        name = dialog.get_input()
-        if not name:
-            self._preset_combo.configure(values=self._preset_values())
-            self._preset_combo.set("")
-            return
-        safe = re.sub(r'[^\w\s\-]', '', name.strip()).strip()
-        if not safe:
-            self._log("[Presets] Invalid name — use letters, numbers, spaces, or dashes.")
-            self._preset_combo.configure(values=self._preset_values())
-            self._preset_combo.set("")
-            return
-        path = os.path.join(self._presets_dir, f"{safe}.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.command_map, f, indent=2)
-        self._preset_combo.configure(values=self._preset_values())
-        self._preset_combo.set(safe)
-        self._log(f"[Presets] Created preset '{safe}' with current mappings.")
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # Settings persistence (settings.json)
-    # ══════════════════════════════════════════════════════════════════════════
 
     _SETTINGS_DEFAULTS: dict = {
         "ai_enabled":        False,
@@ -1807,103 +767,189 @@ class TwitchBotApp(ctk.CTk):
         "last_prompt":       "",
     }
 
-    def _load_settings(self) -> dict:
-        s = dict(self._SETTINGS_DEFAULTS)
-        if os.path.exists(self._settings_path):
-            try:
-                with open(self._settings_path, encoding="utf-8") as f:
-                    s.update(json.load(f))
-            except Exception:
-                pass
-        return s
+    def __init__(self) -> None:
+        _here = os.path.dirname(os.path.abspath(__file__))
+        self._here           = _here
+        self._prompts_dir    = os.path.join(_here, "prompts")
+        self._presets_dir    = os.path.join(_here, "plays_presets")
+        self._env_path       = os.path.join(_here, ".env")
+        self._settings_path  = os.path.join(_here, "settings.json")
+        os.makedirs(self._prompts_dir, exist_ok=True)
+        os.makedirs(self._presets_dir, exist_ok=True)
 
-    def _autosave(self) -> None:
-        self._save_settings()
-        self._save_env()
-        self.after(10_000, self._autosave)
+        env      = self._load_env()
+        settings = self._load_settings()
 
-    def _save_settings(self) -> None:
-        try:
-            every_n  = int(self._e_every_n.get().strip()   or "5")
-        except ValueError:
-            every_n  = 5
-        try:
-            min_bits = int(self._e_min_bits.get().strip()  or "100")
-        except ValueError:
-            min_bits = 100
+        _local_piper   = os.path.join(_here, "piper", "piper")
+        _default_piper = _local_piper if os.path.exists(_local_piper) else ""
 
-        data = {
-            "ai_enabled":       self.ai_enabled.get(),
-            "trigger_every_n":  self._var_every_n_enabled.get(),
-            "every_n":          every_n,
-            "trigger_mentions": self._var_mentions.get(),
-            "trigger_bits":     self._var_trigger_bits.get(),
-            "min_bits":         min_bits,
-            "trigger_points":   self._var_trigger_points.get(),
-            "reward_id":        self._e_reward_id.get().strip(),
-            "tts_ai":           self._var_tts_ai.get(),
-            "plays_enabled":    self.game_input_enabled.get(),
-            "command_map":      self.command_map,
-            "last_prompt":      self._prompt_combo.get().strip(),
+        # Single source of truth for all runtime config.
+        # Read from worker threads via get_*_cfg() callables (which snapshot under lock).
+        self._config: dict = {
+            # ── credentials (.env) ─────────────────────────────────────────
+            "twitch_channel":          env.get("TWITCH_CHANNEL", ""),
+            "twitch_username":         env.get("TWITCH_USERNAME", ""),
+            "twitch_client_id":        env.get("TWITCH_CLIENT_ID", ""),
+            "twitch_token":            env.get("TWITCH_TOKEN", ""),
+            "llm_provider":            env.get("LLM_PROVIDER", "Ollama"),
+            "llm_endpoint":            env.get("LLM_ENDPOINT",
+                                               "http://localhost:11434/v1/chat/completions"),
+            "llm_model":               env.get("LLM_MODEL", "llama3"),
+            "llm_api_key":             env.get("LLM_API_KEY", ""),
+            "piper_exe":               env.get("PIPER_EXE", "") or _default_piper,
+            "piper_model":             env.get("PIPER_MODEL", ""),
+            "piper_config":            env.get("PIPER_CONFIG", ""),
+            "discord_token":           env.get("DISCORD_TOKEN", ""),
+            "discord_channel_id":      env.get("DISCORD_CHANNEL_ID", ""),
+            "discord_trigger":         env.get("DISCORD_TRIGGER", "All messages"),
+            "discord_use_shared_prompt": (
+                env.get("DISCORD_USE_SHARED_PROMPT", "true").lower() != "false"
+            ),
+            "discord_prompt":          env.get("DISCORD_PROMPT", ""),
+            "web_port":                int(env.get("WEB_PORT", "5000") or "5000"),
+            # ── runtime toggles (settings.json) ────────────────────────────
+            "ai_enabled":       settings.get("ai_enabled",       False),
+            "plays_enabled":    settings.get("plays_enabled",    False),
+            "trigger_every_n":  settings.get("trigger_every_n",  True),
+            "every_n":          settings.get("every_n",          5),
+            "trigger_mentions": settings.get("trigger_mentions", False),
+            "trigger_bits":     settings.get("trigger_bits",     False),
+            "min_bits":         settings.get("min_bits",         100),
+            "trigger_points":   settings.get("trigger_points",   False),
+            "reward_id":        settings.get("reward_id",        ""),
+            "tts_ai":           settings.get("tts_ai",           True),
+            "command_map":      dict(settings.get("command_map", {})),
+            "last_prompt":      settings.get("last_prompt",      ""),
+            "system_prompt":    "",
+            # ── connection status ───────────────────────────────────────────
+            "twitch_status":    "off",   # off / connecting / online
+            "discord_status":   "off",   # off / connecting / online / error
         }
-        with open(self._settings_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        self._config_lock = threading.Lock()
+        self._ai_counter  = 0
 
-    def _apply_settings(self, s: dict) -> None:
-        # AI Interaction
-        self.ai_enabled.set(s["ai_enabled"])
-        self._var_every_n_enabled.set(s["trigger_every_n"])
-        self._e_every_n.delete(0, "end")
-        self._e_every_n.insert(0, str(s["every_n"]))
-        self._var_mentions.set(s["trigger_mentions"])
-        self._var_trigger_bits.set(s["trigger_bits"])
-        self._e_min_bits.delete(0, "end")
-        self._e_min_bits.insert(0, str(s["min_bits"]))
-        self._var_trigger_points.set(s["trigger_points"])
-        self._e_reward_id.delete(0, "end")
-        self._e_reward_id.insert(0, s["reward_id"])
-        self._var_tts_ai.set(s["tts_ai"])
-        # Twitch Plays
-        self.game_input_enabled.set(s["plays_enabled"])
-        self.command_map = {k: v for k, v in s.get("command_map", {}).items()}
-        self._refresh_plays()
-        # Restore last loaded prompt
-        self._prompt_combo.configure(values=self._prompt_values())
-        last = s.get("last_prompt", "")
+        # Load last-used prompt content from file
+        last = self._config["last_prompt"]
         if last:
-            self._prompt_combo.set(last)
-            self._on_prompt_selected(last)
+            _p = os.path.join(self._prompts_dir, f"{last}.txt")
+            if os.path.exists(_p):
+                try:
+                    with open(_p, encoding="utf-8") as _f:
+                        self._config["system_prompt"] = _f.read()
+                except Exception:
+                    pass
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # OAuth helper
-    # ══════════════════════════════════════════════════════════════════════════
+        # SSE log broadcast: _log_lock protects both _log_ring and _sse_clients
+        self._log_lock:   threading.Lock        = threading.Lock()
+        self._log_ring:   collections.deque     = collections.deque(maxlen=200)
+        self._sse_clients: list[queue.Queue]    = []
 
-    def _get_oauth_token(self) -> None:
-        client_id = self.e_client_id.get().strip()
-        if not client_id:
-            self._log("[Auth] Enter your Client ID before requesting a token.")
-            return
+        # Service handles
+        self._irc:     TwitchIRCClient | None   = None
+        self._tts:     TTSEngine | None         = None
+        self._ai:      AIResponseHandler | None = None
+        self._discord: DiscordClient | None     = None
 
-        scope = "chat:read+chat:edit"
-        url = (
-            "https://id.twitch.tv/oauth2/authorize"
-            f"?client_id={client_id}"
-            "&redirect_uri=http://localhost"
-            "&response_type=token"
-            f"&scope={scope}"
+        # Flask app
+        self._flask = _flask.Flask(
+            __name__,
+            template_folder=os.path.join(_here, "templates"),
         )
+        self._register_routes()
 
-        self._log("[Auth] ── OAuth Authorization URL (copy and open in your browser) ──")
-        self._log(url)
-        self._log("[Auth] Steps after authorizing:")
-        self._log("[Auth]   1. Click Authorize on the Twitch page.")
-        self._log("[Auth]   2. Browser redirects to localhost (error page is fine).")
-        self._log("[Auth]   3. Copy the value between 'access_token=' and '&scope' in the address bar.")
-        self._log("[Auth]   4. Go to the Connection tab, paste it into the OAuth Token field.")
-        self._log("[Auth]   5. Click Connect.")
+        self._start_services()
+        self._log("[System] Ready.")
+        self._log_platform_info()
+        self._autosave()
+
+        # Auto-connect if credentials already saved
+        if all(self._config.get(k) for k in
+               ("twitch_channel", "twitch_username", "twitch_token")):
+            t = threading.Timer(0.8, self._connect)
+            t.daemon = True
+            t.start()
+        if self._config.get("discord_token") and self._config.get("discord_channel_id"):
+            t = threading.Timer(1.2, self._discord_connect)
+            t.daemon = True
+            t.start()
+
+    def _log_platform_info(self) -> None:
+        libs = []
+        libs.append("pygame ✓" if HAS_PYGAME else "pygame ✗ (no audio)")
+        libs.append("pydirectinput ✓" if HAS_PYDIRECTINPUT else "pydirectinput ✗")
+        libs.append("pynput ✓" if HAS_PYNPUT else "pynput ✗")
+        self._log(f"[System] Libraries: {', '.join(libs)}")
+        if not HAS_PYDIRECTINPUT and not HAS_PYNPUT:
+            self._log("[System] WARNING: No input library found — Twitch Plays disabled.")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # .env persistence
+    # Thread-safe logging + SSE broadcast
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _log(self, msg: str) -> None:
+        ts   = datetime.now().strftime("%H:%M:%S")
+        line = f"[{ts}]  {msg}"
+        with self._log_lock:
+            self._log_ring.append(line)
+            for q in list(self._sse_clients):
+                q.put(f"data: {line}\n\n")
+
+    def _broadcast_status(self) -> None:
+        """Push a status event to all SSE clients (called after connection changes)."""
+        with self._config_lock:
+            payload = json.dumps({
+                "twitch_status":  self._config["twitch_status"],
+                "discord_status": self._config["discord_status"],
+            })
+        msg = f"event: status\ndata: {payload}\n\n"
+        with self._log_lock:
+            for q in list(self._sse_clients):
+                q.put(msg)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Config getters — called on worker threads; snapshot under lock
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _get_tts_cfg(self) -> dict:
+        with self._config_lock:
+            return {
+                "piper_exe":   self._config.get("piper_exe")    or "piper",
+                "model_path":  self._config.get("piper_model",  ""),
+                "config_path": self._config.get("piper_config", ""),
+            }
+
+    def _get_ai_cfg(self) -> dict:
+        with self._config_lock:
+            return {
+                "provider":      self._config.get("llm_provider", "Ollama"),
+                "endpoint":      self._config.get("llm_endpoint", ""),
+                "model":         self._config.get("llm_model",    ""),
+                "api_key":       self._config.get("llm_api_key",  ""),
+                "system_prompt": self._config.get("system_prompt", ""),
+                "tts_ai":        self._config.get("tts_ai",        True),
+            }
+
+    def _get_irc_creds(self) -> dict:
+        with self._config_lock:
+            return {
+                "channel":  self._config.get("twitch_channel",  ""),
+                "username": self._config.get("twitch_username", ""),
+                "token":    self._config.get("twitch_token",    ""),
+            }
+
+    def _get_discord_cfg(self) -> dict:
+        with self._config_lock:
+            use_shared     = self._config.get("discord_use_shared_prompt", True)
+            discord_prompt = "" if use_shared else self._config.get("discord_prompt", "")
+            return {
+                "discord_token":      self._config.get("discord_token",      ""),
+                "discord_channel_id": self._config.get("discord_channel_id", ""),
+                "discord_trigger":    self._config.get("discord_trigger",    "All messages"),
+                "discord_prompt":     discord_prompt,
+            }
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Persistence
     # ══════════════════════════════════════════════════════════════════════════
 
     def _load_env(self) -> dict[str, str]:
@@ -1919,270 +965,77 @@ class TwitchBotApp(ctk.CTk):
                 env[k.strip()] = v.strip()
         return env
 
-    def _save_env(self, *, log: bool = False) -> None:
+    def _save_env(self) -> None:
+        with self._config_lock:
+            c = dict(self._config)
         lines = [
-            f"TWITCH_CHANNEL={self.e_channel.get().strip()}",
-            f"TWITCH_USERNAME={self.e_username.get().strip()}",
-            f"TWITCH_CLIENT_ID={self.e_client_id.get().strip()}",
-            f"TWITCH_TOKEN={self.e_token.get().strip()}",
-            f"LLM_PROVIDER={self._provider_combo.get()}",
-            f"LLM_ENDPOINT={self.e_endpoint.get().strip()}",
-            f"LLM_MODEL={self.e_model.get().strip()}",
-            f"LLM_API_KEY={self.e_api_key.get().strip()}",
-            f"PIPER_EXE={self.e_piper_exe.get().strip()}",
-            f"PIPER_MODEL={self.e_piper_model.get().strip()}",
-            f"PIPER_CONFIG={self.e_piper_cfg.get().strip()}",
-            f"DISCORD_TOKEN={self.e_discord_token.get().strip()}",
-            f"DISCORD_CHANNEL_ID={self.e_discord_channel_id.get().strip()}",
-            f"DISCORD_TRIGGER={self._discord_trigger_combo.get()}",
-            f"DISCORD_USE_SHARED_PROMPT={'true' if self._var_discord_shared_prompt.get() else 'false'}",
-            f"DISCORD_PROMPT={self._discord_prompt_box.get('1.0', 'end-1c')}",
+            f"TWITCH_CHANNEL={c.get('twitch_channel', '')}",
+            f"TWITCH_USERNAME={c.get('twitch_username', '')}",
+            f"TWITCH_CLIENT_ID={c.get('twitch_client_id', '')}",
+            f"TWITCH_TOKEN={c.get('twitch_token', '')}",
+            f"LLM_PROVIDER={c.get('llm_provider', 'Ollama')}",
+            f"LLM_ENDPOINT={c.get('llm_endpoint', '')}",
+            f"LLM_MODEL={c.get('llm_model', '')}",
+            f"LLM_API_KEY={c.get('llm_api_key', '')}",
+            f"PIPER_EXE={c.get('piper_exe', '')}",
+            f"PIPER_MODEL={c.get('piper_model', '')}",
+            f"PIPER_CONFIG={c.get('piper_config', '')}",
+            f"DISCORD_TOKEN={c.get('discord_token', '')}",
+            f"DISCORD_CHANNEL_ID={c.get('discord_channel_id', '')}",
+            f"DISCORD_TRIGGER={c.get('discord_trigger', 'All messages')}",
+            f"DISCORD_USE_SHARED_PROMPT="
+            f"{'true' if c.get('discord_use_shared_prompt', True) else 'false'}",
+            f"DISCORD_PROMPT={c.get('discord_prompt', '')}",
+            f"WEB_PORT={c.get('web_port', 5000)}",
         ]
         with open(self._env_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
-        if log:
-            self._log("[System] Connection settings saved to .env")
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # Prompt save / load
-    # ══════════════════════════════════════════════════════════════════════════
+    def _load_settings(self) -> dict:
+        s = dict(self._SETTINGS_DEFAULTS)
+        if os.path.exists(self._settings_path):
+            try:
+                with open(self._settings_path, encoding="utf-8") as f:
+                    s.update(json.load(f))
+            except Exception:
+                pass
+        return s
 
-    def _list_prompts(self) -> list[str]:
-        """Return sorted prompt names (filenames without .txt) from the prompts dir."""
-        if not os.path.isdir(self._prompts_dir):
-            return []
-        return sorted(f[:-4] for f in os.listdir(self._prompts_dir) if f.endswith(".txt"))
+    def _save_settings(self) -> None:
+        with self._config_lock:
+            c = dict(self._config)
+        data = {
+            "ai_enabled":       c.get("ai_enabled",       False),
+            "trigger_every_n":  c.get("trigger_every_n",  True),
+            "every_n":          c.get("every_n",          5),
+            "trigger_mentions": c.get("trigger_mentions", False),
+            "trigger_bits":     c.get("trigger_bits",     False),
+            "min_bits":         c.get("min_bits",         100),
+            "trigger_points":   c.get("trigger_points",   False),
+            "reward_id":        c.get("reward_id",        ""),
+            "tts_ai":           c.get("tts_ai",           True),
+            "plays_enabled":    c.get("plays_enabled",    False),
+            "command_map":      c.get("command_map",      {}),
+            "last_prompt":      c.get("last_prompt",      ""),
+        }
+        with open(self._settings_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
 
-    def _prompt_values(self) -> list[str]:
-        """Dropdown values: special New entry first, then existing prompts."""
-        return ["+ New Prompt"] + self._list_prompts()
-
-    def _on_prompt_selected(self, name: str) -> None:
-        if name == "+ New Prompt":
-            self._new_prompt()
-            return
-        if not name:
-            return
-        path = os.path.join(self._prompts_dir, f"{name}.txt")
-        if not os.path.exists(path):
-            return
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-        self._system_prompt.delete("1.0", "end")
-        self._system_prompt.insert("1.0", content)
-        self._sync_prompt_cache()
-        self._log(f"[Prompts] Loaded ← {name}")
-
-    def _save_prompt(self) -> None:
-        name = self._prompt_combo.get().strip()
-        if not name or name == "+ New Prompt":
-            self._log("[Prompts] Select or type a prompt name first.")
-            return
-        safe = re.sub(r'[^\w\s\-]', '', name).strip()
-        if not safe:
-            self._log("[Prompts] Invalid name — use letters, numbers, spaces, or dashes.")
-            return
-        path = os.path.join(self._prompts_dir, f"{safe}.txt")
-        content = self._system_prompt.get("1.0", "end-1c")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
-        self._prompt_combo.configure(values=self._prompt_values())
-        self._prompt_combo.set(safe)
-        self._log(f"[Prompts] Saved → {safe}")
-
-    def _new_prompt(self) -> None:
-        dialog = ctk.CTkInputDialog(text="Name for new prompt:", title="New Prompt")
-        name = dialog.get_input()
-        if not name:
-            self._prompt_combo.configure(values=self._prompt_values())
-            self._prompt_combo.set("")
-            return
-        safe = re.sub(r'[^\w\s\-]', '', name.strip()).strip()
-        if not safe:
-            self._log("[Prompts] Invalid name — use letters, numbers, spaces, or dashes.")
-            self._prompt_combo.configure(values=self._prompt_values())
-            self._prompt_combo.set("")
-            return
-        self._system_prompt.delete("1.0", "end")
-        self._prompt_combo.configure(values=self._prompt_values())
-        self._prompt_combo.set(safe)
-        self._sync_prompt_cache()
-        self._log(f"[Prompts] New prompt '{safe}' — edit and click Save.")
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # Thread-safe logging
-    # ══════════════════════════════════════════════════════════════════════════
-
-    def _log(self, msg: str) -> None:
-        """Queue a log line from any thread."""
-        ts = datetime.now().strftime("%H:%M:%S")
-        self._log_queue.put(f"[{ts}]  {msg}")
-
-    def _poll_logs(self) -> None:
-        """
-        Drain the log queue on the GUI thread every 80 ms.
-        Batches all pending messages in one pass to minimise widget updates.
-        """
-        lines: list[str] = []
-        try:
-            while True:
-                lines.append(self._log_queue.get_nowait())
-        except queue.Empty:
-            pass
-
-        if lines:
-            self._console.configure(state="normal")
-            self._console.insert("end", "\n".join(lines) + "\n")
-            self._console.see("end")
-            self._console.configure(state="disabled")
-
-        self._sync_prompt_cache()
-        self.after(80, self._poll_logs)
-
-    def _clear_console(self) -> None:
-        self._console.configure(state="normal")
-        self._console.delete("1.0", "end")
-        self._console.configure(state="disabled")
-
-    def _send_manual_prompt(self) -> None:
-        msg = self._e_manual_prompt.get().strip()
-        if not msg:
-            return
-        self._e_manual_prompt.delete(0, "end")
-        self._log(f"[Host]: {msg}")
-        ai = self._ai
-        if not ai:
-            self._log("[Host] AI not initialised — restart the app.")
-            return
-        ai.handle("Host", msg)
-
-    def _build_manual_prompt(self) -> None:
-        bar = ctk.CTkFrame(self, fg_color="transparent")
-        bar.grid(row=4, column=0, sticky="ew", padx=10, pady=(2, 0))
-        bar.grid_columnconfigure(0, weight=1)
-
-        self._e_manual_prompt = ctk.CTkEntry(
-            bar, placeholder_text="Message the AI...",
-        )
-        self._e_manual_prompt.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        self._e_manual_prompt.bind("<Return>", lambda _: self._send_manual_prompt())
-
-        ctk.CTkButton(
-            bar, text="Send", width=80,
-            command=self._send_manual_prompt,
-        ).grid(row=0, column=1)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # Utilities
-    # ══════════════════════════════════════════════════════════════════════════
-
-    def _on_provider_change(self, provider: str) -> None:
-        info = _PROVIDERS.get(provider, _PROVIDERS["Ollama"])
-        self._set_api_key_visibility(info["needs_key"])
-        self.e_endpoint.delete(0, "end")
-        self.e_endpoint.insert(0, info["endpoint"])
-        self._fetch_models()
-
-    def _set_api_key_visibility(self, visible: bool) -> None:
-        if visible:
-            self._api_key_lbl.grid()
-            self.e_api_key.grid()
-        else:
-            self._api_key_lbl.grid_remove()
-            self.e_api_key.grid_remove()
-
-    def _fetch_models(self) -> None:
-        import urllib.parse
-        provider = self._provider_combo.get()
-        api_key  = self.e_api_key.get().strip()
-
-        # Claude: hardcoded list, no network call needed
-        if provider == "Claude":
-            self.after(0, lambda: self._apply_model_list(_CLAUDE_MODELS))
-            return
-
-        endpoint = self.e_endpoint.get().strip()
-        if not endpoint:
-            return
-        parsed = urllib.parse.urlparse(endpoint)
-        base   = f"{parsed.scheme}://{parsed.netloc}"
-
-        def _worker() -> None:
-            models: list[str] = []
-
-            if provider == "Gemini":
-                try:
-                    url  = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-                    resp = requests.get(url, timeout=10)
-                    resp.raise_for_status()
-                    raw = resp.json().get("models", [])
-                    models = [
-                        m["name"].removeprefix("models/")
-                        for m in raw
-                        if "generateContent" in m.get("supportedGenerationMethods", [])
-                    ]
-                except Exception:
-                    pass
-            elif provider in ("OpenAI", "Grok"):
-                try:
-                    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-                    resp    = requests.get(f"{base}/v1/models", headers=headers, timeout=10)
-                    resp.raise_for_status()
-                    models  = [item["id"] for item in resp.json().get("data", [])]
-                    models.sort()
-                except Exception:
-                    pass
-            else:
-                # Ollama / LM Studio — try OpenAI list then Ollama native
-                for url, key, sub in [
-                    (f"{base}/v1/models", "data",   "id"),
-                    (f"{base}/api/tags",  "models", "name"),
-                ]:
-                    try:
-                        resp = requests.get(url, timeout=5)
-                        resp.raise_for_status()
-                        models = [item[sub] for item in resp.json().get(key, []) if sub in item]
-                        if models:
-                            break
-                    except Exception:
-                        continue
-
-            if models:
-                self.after(0, lambda m=models: self._apply_model_list(m))
-            else:
-                self._log("[AI] Could not fetch model list — check endpoint and API key.")
-
-        threading.Thread(target=_worker, daemon=True).start()
-
-    def _apply_model_list(self, models: list[str]) -> None:
-        current = self.e_model.get()
-        self.e_model.configure(values=models)
-        self.e_model.set(current if current in models else models[0])
-        self._log(f"[AI] Loaded {len(models)} model(s).")
-
-    @staticmethod
-    def _browse(entry: ctk.CTkEntry) -> None:
-        path = filedialog.askopenfilename()
-        if path:
-            entry.delete(0, "end")
-            entry.insert(0, path)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # Clean shutdown
-    # ══════════════════════════════════════════════════════════════════════════
-
-    def on_closing(self) -> None:
+    def _autosave(self) -> None:
         self._save_settings()
         self._save_env()
-        self._disconnect()
-        self._stop_services()
-        self.destroy()
+        t = threading.Timer(10, self._autosave)
+        t.daemon = True
+        t.start()
 
+    def _register_routes(self) -> None:
+        pass  # implemented in Task 5
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Entry point
-# ══════════════════════════════════════════════════════════════════════════════
-if __name__ == "__main__":
-    app = TwitchBotApp()
-    app.protocol("WM_DELETE_WINDOW", app.on_closing)
-    app.mainloop()
+    def _start_services(self) -> None:
+        pass  # implemented in Task 4
+
+    def _connect(self) -> None:
+        pass  # implemented in Task 4
+
+    def _discord_connect(self) -> None:
+        pass  # implemented in Task 4
