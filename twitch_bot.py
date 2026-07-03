@@ -1036,10 +1036,164 @@ class WebApp:
         pass  # implemented in Task 5
 
     def _start_services(self) -> None:
-        pass  # implemented in Task 4
+        self._tts = TTSEngine(get_config=self._get_tts_cfg, log=self._log)
+        self._ai  = AIResponseHandler(
+            get_config=self._get_ai_cfg,
+            log=self._log,
+            tts=self._tts,
+        )
+
+    def _stop_services(self) -> None:
+        if self._discord:
+            self._discord.disconnect()
+            self._discord = None
+        if self._tts:
+            self._tts.stop()
+            self._tts = None
+        if self._ai:
+            self._ai.stop()
+            self._ai = None
 
     def _connect(self) -> None:
-        pass  # implemented in Task 4
+        self._save_env()
+        with self._config_lock:
+            self._config["twitch_status"] = "connecting"
+        self._broadcast_status()
+        self._irc = TwitchIRCClient(
+            get_creds=self._get_irc_creds,
+            log=self._log,
+            on_message=self._dispatch,
+        )
+        self._irc.connect()
+        self._log("[System] Connecting to Twitch IRC…")
+
+    def _disconnect(self) -> None:
+        irc = self._irc
+        if irc:
+            irc.disconnect()
+            self._irc = None
+        with self._config_lock:
+            self._config["twitch_status"] = "off"
+        self._broadcast_status()
+        self._log("[System] Disconnected.")
 
     def _discord_connect(self) -> None:
-        pass  # implemented in Task 4
+        if self._discord:
+            self._discord.disconnect()
+        self._save_env()
+
+        def on_ready_cb() -> None:
+            with self._config_lock:
+                self._config["discord_status"] = "online"
+            self._broadcast_status()
+
+        def on_failure_cb() -> None:
+            with self._config_lock:
+                self._config["discord_status"] = "error"
+            self._discord = None
+            self._broadcast_status()
+
+        with self._config_lock:
+            self._config["discord_status"] = "connecting"
+        self._broadcast_status()
+
+        self._discord = DiscordClient(
+            get_config=self._get_discord_cfg,
+            log=self._log,
+            ai_handler=self._ai,
+            on_ready_cb=on_ready_cb,
+            on_failure_cb=on_failure_cb,
+        )
+        self._discord.connect()
+        self._log("[Discord] Connecting…")
+
+    def _discord_disconnect(self) -> None:
+        discord = self._discord
+        if discord:
+            discord.disconnect()
+            self._discord = None
+        with self._config_lock:
+            self._config["discord_status"] = "off"
+        self._broadcast_status()
+        self._log("[Discord] Disconnected.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # Message dispatch  (called from IRC thread)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _dispatch(self, username: str, message: str,
+                  bits: int = 0, reward_id: str = "") -> None:
+        tag = (f"  [{bits} bits]" if bits
+               else (f"  [channel points]" if reward_id else ""))
+        self._log(f"[Chat] {username}{tag}: {message}")
+        if reward_id:
+            self._log(f"[Chat] Reward ID: {reward_id}")
+        self._route_plays(username, message)
+        self._route_ai(username, message, bits, reward_id)
+        # Mark Twitch as online on first message
+        with self._config_lock:
+            if self._config["twitch_status"] != "online":
+                self._config["twitch_status"] = "online"
+                do_broadcast = True
+            else:
+                do_broadcast = False
+        if do_broadcast:
+            self._broadcast_status()
+
+    def _route_plays(self, username: str, message: str) -> None:
+        with self._config_lock:
+            enabled     = self._config.get("plays_enabled", False)
+            command_map = dict(self._config.get("command_map", {}))
+        word = message.strip().split()[0].lower() if message.strip() else ""
+        if word not in command_map or not enabled:
+            return
+        entry = command_map[word]
+        self._log(
+            f"[Plays] {username} → {word}  "
+            f"(key '{entry['key']}' × {entry['duration']}s)"
+        )
+        GameInputController(_BoolGetter(enabled)).execute(
+            entry["key"], entry["duration"]
+        )
+
+    def _route_ai(self, username: str, message: str,
+                  bits: int = 0, reward_id: str = "") -> None:
+        with self._config_lock:
+            ai_enabled       = self._config.get("ai_enabled",       False)
+            trigger_every_n  = self._config.get("trigger_every_n",  True)
+            every_n          = self._config.get("every_n",          5)
+            trig_mentions    = self._config.get("trigger_mentions",  False)
+            trig_bits        = self._config.get("trigger_bits",      False)
+            min_bits         = self._config.get("min_bits",          100)
+            trig_points      = self._config.get("trigger_points",    False)
+            required_reward  = self._config.get("reward_id",         "")
+            bot_user         = self._config.get("twitch_username",   "").lower()
+
+        if not ai_enabled:
+            return
+
+        triggered = False
+
+        if trig_mentions and bot_user and bot_user in message.lower():
+            triggered = True
+
+        if trig_bits and bits > 0 and bits >= max(1, min_bits):
+            triggered = True
+            self._log(f"[AI] Bits trigger: {username} cheered {bits} bits")
+
+        if trig_points and reward_id:
+            if not required_reward or reward_id.lower() == required_reward.lower():
+                triggered = True
+                self._log(f"[AI] Points trigger: {username} redeemed (ID: {reward_id})")
+            else:
+                self._log(f"[AI] Unmatched redemption — reward ID: {reward_id}")
+
+        if trigger_every_n:
+            self._ai_counter += 1
+            if self._ai_counter >= max(1, every_n):
+                self._ai_counter = 0
+                triggered = True
+
+        ai = self._ai
+        if triggered and ai:
+            ai.handle(username, message)
