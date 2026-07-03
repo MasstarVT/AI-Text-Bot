@@ -975,7 +975,7 @@ class TwitchBotApp(ctk.CTk):
 
     def _build_plays(self, tab: ctk.CTkFrame) -> None:
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(2, weight=1)
+        tab.grid_rowconfigure(3, weight=1)
 
         # Master toggle
         hdr = ctk.CTkFrame(tab, corner_radius=8)
@@ -1002,9 +1002,28 @@ class TwitchBotApp(ctk.CTk):
             ),
         )
 
+        # Preset bar
+        preset_bar = ctk.CTkFrame(tab, corner_radius=8)
+        preset_bar.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
+
+        ctk.CTkLabel(preset_bar, text="Preset:").pack(side="left", padx=(14, 4), pady=10)
+        self._preset_combo = ctk.CTkComboBox(
+            preset_bar,
+            values=self._preset_values(),
+            command=self._on_preset_selected,
+            width=180,
+        )
+        self._preset_combo.set("")
+        self._preset_combo.pack(side="left", padx=4)
+
+        ctk.CTkButton(
+            preset_bar, text="Save", width=80,
+            command=self._save_preset,
+        ).pack(side="left", padx=10)
+
         # Add-mapping controls
         add = ctk.CTkFrame(tab, corner_radius=8)
-        add.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
+        add.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 6))
 
         ctk.CTkLabel(add, text="Command:").pack(side="left", padx=(14, 4), pady=10)
         self._e_new_cmd = ctk.CTkEntry(add, placeholder_text="!jump", width=110)
@@ -1028,7 +1047,7 @@ class TwitchBotApp(ctk.CTk):
         self._plays_scroll = ctk.CTkScrollableFrame(
             tab, label_text="Active Command Mappings",
         )
-        self._plays_scroll.grid(row=2, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self._plays_scroll.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
         self._plays_scroll.grid_columnconfigure(0, weight=1)
         self._refresh_plays()
 
