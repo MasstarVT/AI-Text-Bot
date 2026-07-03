@@ -28,6 +28,7 @@ Cross-thread communication:
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import os
 import re
@@ -38,9 +39,8 @@ import tempfile
 import threading
 import time
 from datetime import datetime
-from tkinter import filedialog
 
-import customtkinter as ctk
+import flask as _flask
 import requests
 
 # ── Optional dependencies (graceful degradation) ────────────────────────────
@@ -65,19 +65,9 @@ try:
 except Exception:
     HAS_PYNPUT = False
 
-# ── Global theme ─────────────────────────────────────────────────────────────
-ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("blue")
-
 TWITCH_HOST     = "irc.chat.twitch.tv"
 TWITCH_PORT     = 6667
 RECONNECT_DELAY = 5      # seconds between auto-reconnect attempts
-
-# Colour constants (CTkButton accepts (normal, hover) tuples as fg_color)
-_GREEN = ("#1a7f37", "#15662d")
-_RED   = ("#c0392b", "#922b21")
-ON_FG  = "#2ecc71"
-OFF_FG = "#e74c3c"
 
 # ── AI provider definitions ───────────────────────────────────────────────────
 _PROVIDERS: dict[str, dict] = {
@@ -100,6 +90,13 @@ _CLAUDE_MODELS = [
 ]
 
 
+class _BoolGetter:
+    """Minimal stand-in for ctk.BooleanVar used by GameInputController."""
+    __slots__ = ("_v",)
+    def __init__(self, v: bool) -> None: self._v = v
+    def get(self) -> bool: return self._v
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # GameInputController
 # ══════════════════════════════════════════════════════════════════════════════
@@ -114,7 +111,7 @@ class GameInputController:
     reader is never blocked waiting for a hold-duration to elapse.
     """
 
-    def __init__(self, enabled_var: ctk.BooleanVar) -> None:
+    def __init__(self, enabled_var: _BoolGetter) -> None:
         self.enabled_var = enabled_var
 
     def execute(self, key: str, duration: float) -> None:
