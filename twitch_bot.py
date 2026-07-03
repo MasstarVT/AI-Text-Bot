@@ -1068,21 +1068,13 @@ class TwitchBotApp(ctk.CTk):
         if _saved_shared:
             self._discord_prompt_box.grid_remove()
 
-        # Discord Connect / Disconnect buttons
-        _dc_btn_frame = ctk.CTkFrame(tab, fg_color="transparent")
-        _dc_btn_frame.grid(row=r, column=1, sticky="w", padx=(0, 14), pady=(6, 10))
-        self._btn_discord_connect = ctk.CTkButton(
-            _dc_btn_frame, text="Connect Discord", width=140,
-            fg_color=_GREEN[0], hover_color=_GREEN[1],
-            command=self._discord_connect,
-        )
-        self._btn_discord_connect.pack(side="left", padx=(0, 8))
-        self._btn_discord_disconnect = ctk.CTkButton(
-            _dc_btn_frame, text="Disconnect", width=110,
-            fg_color=_RED[0], hover_color=_RED[1], state="disabled",
-            command=self._discord_disconnect,
-        )
-        self._btn_discord_disconnect.pack(side="left")
+        ctk.CTkLabel(
+            tab,
+            text="Use the Discord / Discord Off buttons in the header bar to connect.",
+            text_color="#888888",
+            font=ctk.CTkFont(size=11),
+            anchor="w",
+        ).grid(row=r, column=0, columnspan=2, sticky="w", padx=14, pady=(4, 10))
         r += 1
 
     def _toggle_discord_prompt_box(self) -> None:
@@ -1330,11 +1322,25 @@ class TwitchBotApp(ctk.CTk):
         )
         self._lbl_conn_status.grid(row=0, column=4, padx=(0, 8), pady=10)
 
+        self._btn_discord_connect = ctk.CTkButton(
+            hdr, text="Discord", width=90,
+            fg_color=_GREEN[0], hover_color=_GREEN[1],
+            command=self._discord_connect,
+        )
+        self._btn_discord_connect.grid(row=0, column=5, padx=(0, 4), pady=10)
+
+        self._btn_discord_disconnect = ctk.CTkButton(
+            hdr, text="Discord Off", width=100, state="disabled",
+            fg_color=_RED[0], hover_color=_RED[1],
+            command=self._discord_disconnect,
+        )
+        self._btn_discord_disconnect.grid(row=0, column=6, padx=(0, 8), pady=10)
+
         self._lbl_discord_status = ctk.CTkLabel(
             hdr, text="Discord: ● Off", text_color=OFF_FG,
             font=ctk.CTkFont(size=12),
         )
-        self._lbl_discord_status.grid(row=0, column=5, padx=(0, 14), pady=10)
+        self._lbl_discord_status.grid(row=0, column=7, padx=(0, 14), pady=10)
 
         self._btn_disconnect = ctk.CTkButton(
             hdr, text="Disconnect", width=120, state="disabled",
