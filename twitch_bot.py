@@ -582,6 +582,8 @@ class TwitchBotApp(ctk.CTk):
         self._env_path      = os.path.join(_here, ".env")
         self._settings_path = os.path.join(_here, "settings.json")
         os.makedirs(self._prompts_dir, exist_ok=True)
+        self._presets_dir = os.path.join(_here, "plays_presets")
+        os.makedirs(self._presets_dir, exist_ok=True)
 
         # Load persisted connection settings (populated before _build_ui so
         # _build_connection can use them as field defaults)
