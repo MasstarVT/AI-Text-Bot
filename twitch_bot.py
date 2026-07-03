@@ -1170,7 +1170,13 @@ class WebApp:
         @app.route("/api/commands", methods=["POST"])
         def api_commands():
             data = _flask.request.get_json(force=True, silent=True) or {}
-            commands = {k: v for k, v in data.get("commands", {}).items()}
+            cmds = data.get("commands")
+            if not isinstance(cmds, dict):
+                return _flask.jsonify({"error": "commands must be an object"}), 400
+            commands = {
+                str(k): v for k, v in cmds.items()
+                if isinstance(v, dict) and isinstance(v.get("key"), str)
+            }
             with self._config_lock:
                 self._config["command_map"] = commands
             return _flask.jsonify({"ok": True})
@@ -1209,10 +1215,23 @@ class WebApp:
         @app.route("/api/settings", methods=["POST"])
         def api_settings_post():
             data = _flask.request.get_json(force=True, silent=True) or {}
+            _INT_KEYS = {"every_n", "min_bits"}
+            _BOOL_KEYS = {
+                "trigger_every_n", "trigger_mentions", "trigger_bits",
+                "trigger_points", "tts_ai", "discord_use_shared_prompt",
+            }
             with self._config_lock:
                 for k in _SETTINGS_KEYS:
                     if k in data:
-                        self._config[k] = data[k]
+                        if k in _INT_KEYS:
+                            try:
+                                self._config[k] = int(data[k])
+                            except (TypeError, ValueError):
+                                pass
+                        elif k in _BOOL_KEYS:
+                            self._config[k] = bool(data[k])
+                        else:
+                            self._config[k] = data[k]
                 if "system_prompt" in data:
                     self._config["system_prompt"] = data["system_prompt"]
             self._save_env()
@@ -1239,7 +1258,7 @@ class WebApp:
             if provider == "Gemini":
                 try:
                     url  = ("https://generativelanguage.googleapis.com"
-                            f"/v1beta/models?key={api_key}")
+                            f"/v1beta/models?key={urllib.parse.quote(api_key, safe='')}")
                     resp = requests.get(url, timeout=10)
                     resp.raise_for_status()
                     models = [
