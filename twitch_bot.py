@@ -1032,8 +1032,356 @@ class WebApp:
         t.daemon = True
         t.start()
 
-    def _register_routes(self) -> None:
-        pass  # implemented in Task 5
+    def _register_routes(self) -> None:  # noqa: C901
+        app = self._flask
+
+        # ── page ──────────────────────────────────────────────────────────────
+
+        @app.route("/")
+        def index():
+            return _flask.render_template("index.html")
+
+        # ── SSE log stream ────────────────────────────────────────────────────
+
+        @app.route("/stream")
+        def stream():
+            q: queue.Queue = queue.Queue()
+            with self._log_lock:
+                history = list(self._log_ring)
+                self._sse_clients.append(q)
+            for line in history:
+                q.put(f"data: {line}\n\n")
+
+            def generate():
+                try:
+                    while True:
+                        try:
+                            yield q.get(timeout=30)
+                        except queue.Empty:
+                            yield ": keepalive\n\n"
+                except GeneratorExit:
+                    pass
+                finally:
+                    with self._log_lock:
+                        try:
+                            self._sse_clients.remove(q)
+                        except ValueError:
+                            pass
+
+            return _flask.Response(
+                generate(),
+                mimetype="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        # ── state snapshot ────────────────────────────────────────────────────
+
+        @app.route("/api/state")
+        def api_state():
+            with self._config_lock:
+                c = dict(self._config)
+            with self._log_lock:
+                history = list(self._log_ring)
+            return _flask.jsonify({
+                "twitch_status":    c["twitch_status"],
+                "discord_status":   c["discord_status"],
+                "ai_enabled":       c["ai_enabled"],
+                "plays_enabled":    c["plays_enabled"],
+                "trigger_every_n":  c["trigger_every_n"],
+                "every_n":          c["every_n"],
+                "trigger_mentions": c["trigger_mentions"],
+                "trigger_bits":     c["trigger_bits"],
+                "min_bits":         c["min_bits"],
+                "trigger_points":   c["trigger_points"],
+                "reward_id":        c["reward_id"],
+                "tts_ai":           c["tts_ai"],
+                "command_map":      c["command_map"],
+                "system_prompt":    c["system_prompt"],
+                "last_prompt":      c["last_prompt"],
+                "log_history":      history,
+                "providers":        list(_PROVIDERS.keys()),
+                "provider_endpoints": {k: v["endpoint"] for k, v in _PROVIDERS.items()},
+                "provider_needs_key": {k: v["needs_key"] for k, v in _PROVIDERS.items()},
+            })
+
+        # ── Twitch lifecycle ──────────────────────────────────────────────────
+
+        @app.route("/api/connect", methods=["POST"])
+        def api_connect():
+            data = _flask.request.get_json(force=True, silent=True) or {}
+            if data:
+                with self._config_lock:
+                    for k in ("twitch_channel", "twitch_username",
+                               "twitch_client_id", "twitch_token"):
+                        if k in data:
+                            self._config[k] = data[k]
+            self._connect()
+            return _flask.jsonify({"ok": True})
+
+        @app.route("/api/disconnect", methods=["POST"])
+        def api_disconnect():
+            self._disconnect()
+            return _flask.jsonify({"ok": True})
+
+        # ── Discord lifecycle ─────────────────────────────────────────────────
+
+        @app.route("/api/discord/connect", methods=["POST"])
+        def api_discord_connect():
+            data = _flask.request.get_json(force=True, silent=True) or {}
+            if data:
+                with self._config_lock:
+                    for k in ("discord_token", "discord_channel_id",
+                               "discord_trigger", "discord_use_shared_prompt",
+                               "discord_prompt"):
+                        if k in data:
+                            self._config[k] = data[k]
+            self._discord_connect()
+            return _flask.jsonify({"ok": True})
+
+        @app.route("/api/discord/disconnect", methods=["POST"])
+        def api_discord_disconnect():
+            self._discord_disconnect()
+            return _flask.jsonify({"ok": True})
+
+        # ── controls ─────────────────────────────────────────────────────────
+
+        @app.route("/api/ai/toggle", methods=["POST"])
+        def api_ai_toggle():
+            with self._config_lock:
+                self._config["ai_enabled"] = not self._config["ai_enabled"]
+                val = self._config["ai_enabled"]
+            return _flask.jsonify({"ai_enabled": val})
+
+        @app.route("/api/input/toggle", methods=["POST"])
+        def api_input_toggle():
+            with self._config_lock:
+                self._config["plays_enabled"] = not self._config["plays_enabled"]
+                val = self._config["plays_enabled"]
+            return _flask.jsonify({"plays_enabled": val})
+
+        @app.route("/api/tts/panic", methods=["POST"])
+        def api_tts_panic():
+            tts = self._tts
+            if tts:
+                tts.panic()
+            self._log("[TTS] Panic — audio stopped and queue cleared.")
+            return _flask.jsonify({"ok": True})
+
+        @app.route("/api/commands", methods=["POST"])
+        def api_commands():
+            data = _flask.request.get_json(force=True, silent=True) or {}
+            commands = {k: v for k, v in data.get("commands", {}).items()}
+            with self._config_lock:
+                self._config["command_map"] = commands
+            return _flask.jsonify({"ok": True})
+
+        @app.route("/api/ai/manual", methods=["POST"])
+        def api_ai_manual():
+            data = _flask.request.get_json(force=True, silent=True) or {}
+            msg = (data.get("message") or "").strip()
+            if not msg:
+                return _flask.jsonify({"error": "empty message"}), 400
+            self._log(f"[Host]: {msg}")
+            ai = self._ai
+            if not ai:
+                return _flask.jsonify({"error": "AI not initialised"}), 503
+            ai.handle("Host", msg)
+            return _flask.jsonify({"ok": True})
+
+        # ── settings ─────────────────────────────────────────────────────────
+
+        _SETTINGS_KEYS = (
+            "twitch_channel", "twitch_username", "twitch_client_id", "twitch_token",
+            "llm_provider", "llm_endpoint", "llm_model", "llm_api_key",
+            "piper_exe", "piper_model", "piper_config",
+            "discord_token", "discord_channel_id", "discord_trigger",
+            "discord_use_shared_prompt", "discord_prompt",
+            "trigger_every_n", "every_n", "trigger_mentions", "trigger_bits",
+            "min_bits", "trigger_points", "reward_id", "tts_ai",
+        )
+
+        @app.route("/api/settings", methods=["GET"])
+        def api_settings_get():
+            with self._config_lock:
+                c = dict(self._config)
+            return _flask.jsonify({k: c.get(k) for k in _SETTINGS_KEYS})
+
+        @app.route("/api/settings", methods=["POST"])
+        def api_settings_post():
+            data = _flask.request.get_json(force=True, silent=True) or {}
+            with self._config_lock:
+                for k in _SETTINGS_KEYS:
+                    if k in data:
+                        self._config[k] = data[k]
+                if "system_prompt" in data:
+                    self._config["system_prompt"] = data["system_prompt"]
+            self._save_env()
+            self._log("[System] Settings saved.")
+            return _flask.jsonify({"ok": True})
+
+        # ── models ───────────────────────────────────────────────────────────
+
+        @app.route("/api/models")
+        def api_models():
+            import urllib.parse
+            provider = _flask.request.args.get("provider", "Ollama")
+            with self._config_lock:
+                api_key  = self._config.get("llm_api_key", "")
+                endpoint = self._config.get("llm_endpoint", "")
+
+            if provider == "Claude":
+                return _flask.jsonify({"models": _CLAUDE_MODELS})
+
+            parsed = urllib.parse.urlparse(endpoint)
+            base   = f"{parsed.scheme}://{parsed.netloc}"
+            models: list[str] = []
+
+            if provider == "Gemini":
+                try:
+                    url  = ("https://generativelanguage.googleapis.com"
+                            f"/v1beta/models?key={api_key}")
+                    resp = requests.get(url, timeout=10)
+                    resp.raise_for_status()
+                    models = [
+                        m["name"].removeprefix("models/")
+                        for m in resp.json().get("models", [])
+                        if "generateContent" in m.get("supportedGenerationMethods", [])
+                    ]
+                except Exception:
+                    pass
+            elif provider in ("OpenAI", "Grok"):
+                try:
+                    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+                    resp    = requests.get(f"{base}/v1/models",
+                                           headers=headers, timeout=10)
+                    resp.raise_for_status()
+                    models  = sorted(i["id"] for i in resp.json().get("data", []))
+                except Exception:
+                    pass
+            else:
+                for url, key, sub in [
+                    (f"{base}/v1/models", "data",   "id"),
+                    (f"{base}/api/tags",  "models", "name"),
+                ]:
+                    try:
+                        resp   = requests.get(url, timeout=5)
+                        resp.raise_for_status()
+                        models = [i[sub] for i in resp.json().get(key, []) if sub in i]
+                        if models:
+                            break
+                    except Exception:
+                        continue
+
+            return _flask.jsonify({"models": models})
+
+        # ── prompts ───────────────────────────────────────────────────────────
+
+        @app.route("/api/prompts")
+        def api_prompts_list():
+            names: list[str] = []
+            if os.path.isdir(self._prompts_dir):
+                names = sorted(
+                    f[:-4] for f in os.listdir(self._prompts_dir)
+                    if f.endswith(".txt")
+                )
+            return _flask.jsonify({"prompts": names})
+
+        @app.route("/api/prompts/<name>", methods=["GET"])
+        def api_prompt_load(name: str):
+            safe = re.sub(r"[^\w\s\-]", "", name).strip()
+            if not safe:
+                return _flask.jsonify({"error": "invalid name"}), 400
+            path = os.path.join(self._prompts_dir, f"{safe}.txt")
+            if not os.path.exists(path):
+                return _flask.jsonify({"error": "not found"}), 404
+            with open(path, encoding="utf-8") as f:
+                content = f.read()
+            return _flask.jsonify({"name": safe, "content": content})
+
+        @app.route("/api/prompts/<name>", methods=["POST"])
+        def api_prompt_save(name: str):
+            safe = re.sub(r"[^\w\s\-]", "", name).strip()
+            if not safe:
+                return _flask.jsonify({"error": "invalid name"}), 400
+            data    = _flask.request.get_json(force=True, silent=True) or {}
+            content = data.get("content", "")
+            os.makedirs(self._prompts_dir, exist_ok=True)
+            with open(os.path.join(self._prompts_dir, f"{safe}.txt"),
+                      "w", encoding="utf-8") as f:
+                f.write(content)
+            with self._config_lock:
+                self._config["system_prompt"] = content
+                self._config["last_prompt"]   = safe
+            self._log(f"[Prompts] Saved → {safe}")
+            return _flask.jsonify({"ok": True, "name": safe})
+
+        # ── presets ───────────────────────────────────────────────────────────
+
+        @app.route("/api/presets")
+        def api_presets_list():
+            names: list[str] = []
+            if os.path.isdir(self._presets_dir):
+                names = sorted(
+                    f[:-5] for f in os.listdir(self._presets_dir)
+                    if f.endswith(".json")
+                )
+            return _flask.jsonify({"presets": names})
+
+        @app.route("/api/presets/<name>", methods=["GET"])
+        def api_preset_load(name: str):
+            safe = re.sub(r"[^\w\s\-]", "", name).strip()
+            if not safe:
+                return _flask.jsonify({"error": "invalid name"}), 400
+            path = os.path.join(self._presets_dir, f"{safe}.json")
+            if not os.path.exists(path):
+                return _flask.jsonify({"error": "not found"}), 404
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            return _flask.jsonify({"name": safe, "commands": data})
+
+        @app.route("/api/presets/<name>", methods=["POST"])
+        def api_preset_save(name: str):
+            safe = re.sub(r"[^\w\s\-]", "", name).strip()
+            if not safe:
+                return _flask.jsonify({"error": "invalid name"}), 400
+            with self._config_lock:
+                commands = dict(self._config.get("command_map", {}))
+            os.makedirs(self._presets_dir, exist_ok=True)
+            with open(os.path.join(self._presets_dir, f"{safe}.json"),
+                      "w", encoding="utf-8") as f:
+                json.dump(commands, f, indent=2)
+            self._log(f"[Presets] Saved → {safe}")
+            return _flask.jsonify({"ok": True, "name": safe})
+
+        # ── file browser ──────────────────────────────────────────────────────
+
+        @app.route("/api/browse")
+        def api_browse():
+            requested = _flask.request.args.get("path", self._here)
+            root      = os.path.realpath(requested)
+            if not os.path.isdir(root):
+                root = self._here
+            try:
+                dirs  = sorted(
+                    e.name for e in os.scandir(root)
+                    if e.is_dir() and not e.name.startswith(".")
+                )
+            except PermissionError:
+                dirs = []
+            try:
+                files = sorted(
+                    e.name for e in os.scandir(root)
+                    if e.is_file() and not e.name.startswith(".")
+                )
+            except PermissionError:
+                files = []
+            parent = str(os.path.dirname(root)) if root != os.path.dirname(root) else None
+            return _flask.jsonify({
+                "path":   root,
+                "parent": parent,
+                "dirs":   dirs,
+                "files":  files,
+            })
 
     def _start_services(self) -> None:
         self._tts = TTSEngine(get_config=self._get_tts_cfg, log=self._log)
