@@ -1412,6 +1412,9 @@ class TwitchBotApp(ctk.CTk):
         )
 
     def _stop_services(self) -> None:
+        if self._discord:
+            self._discord.disconnect()
+            self._discord = None
         if self._tts:
             self._tts.stop()
             self._tts = None
@@ -1443,16 +1446,33 @@ class TwitchBotApp(ctk.CTk):
         }
 
     def _sync_prompt_cache(self) -> None:
-        """Snapshot the system-prompt textbox on the GUI thread for safe worker access."""
+        """Snapshot both prompt textboxes on the GUI thread for safe worker access."""
         text = self._system_prompt.get("1.0", "end-1c")
         with self._prompt_lock:
             self._prompt_cache = text
+        discord_text = self._discord_prompt_box.get("1.0", "end-1c")
+        with self._discord_prompt_lock:
+            self._discord_prompt_cache = discord_text
 
     def _get_irc_creds(self) -> dict:
         return {
             "channel":  self.e_channel.get().strip(),
             "username": self.e_username.get().strip(),
             "token":    self.e_token.get().strip(),
+        }
+
+    def _get_discord_cfg(self) -> dict:
+        use_shared = self._var_discord_shared_prompt.get()
+        if use_shared:
+            discord_prompt = ""  # empty = use shared prompt (None after or-None in DiscordClient)
+        else:
+            with self._discord_prompt_lock:
+                discord_prompt = self._discord_prompt_cache
+        return {
+            "discord_token":      self.e_discord_token.get().strip(),
+            "discord_channel_id": self.e_discord_channel_id.get().strip(),
+            "discord_trigger":    self._discord_trigger_combo.get(),
+            "discord_prompt":     discord_prompt,
         }
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1479,6 +1499,39 @@ class TwitchBotApp(ctk.CTk):
         self._btn_disconnect.configure(state="disabled")
         self._lbl_conn_status.configure(text="Twitch: ● Off", text_color=OFF_FG)
         self._log("[System] Disconnected.")
+
+    def _discord_connect(self) -> None:
+        if self._discord:
+            self._discord.disconnect()
+        self._save_env(log=False)
+        ai = self._ai
+        if not ai:
+            self._log("[Discord] AI handler not running — connect Twitch first or restart the app.")
+            return
+
+        def on_ready_cb():
+            self.after(0, lambda: self._lbl_discord_status.configure(
+                text="Discord: ● On", text_color=ON_FG))
+
+        self._discord = DiscordClient(
+            get_config=self._get_discord_cfg,
+            log=self._log,
+            ai_handler=ai,
+            on_ready_cb=on_ready_cb,
+        )
+        self._discord.connect()
+        self._btn_discord_connect.configure(state="disabled")
+        self._btn_discord_disconnect.configure(state="normal")
+        self._lbl_discord_status.configure(text="Discord: ● Connecting…", text_color="#f39c12")
+
+    def _discord_disconnect(self) -> None:
+        if self._discord:
+            self._discord.disconnect()
+            self._discord = None
+        self._btn_discord_connect.configure(state="normal")
+        self._btn_discord_disconnect.configure(state="disabled")
+        self._lbl_discord_status.configure(text="Discord: ● Off", text_color=OFF_FG)
+        self._log("[Discord] Disconnected.")
 
     def _panic_tts(self) -> None:
         if self._tts:
