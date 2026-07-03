@@ -359,8 +359,8 @@ class AIResponseHandler:
         self._q: queue.Queue[tuple | None] = queue.Queue()
         threading.Thread(target=self._worker, name="AI-Worker", daemon=True).start()
 
-    def handle(self, username: str, message: str, reply_cb=None, prompt_override: str | None = None) -> None:
-        self._q.put((username, message, reply_cb, prompt_override))
+    def handle(self, username: str, message: str, reply_cb=None, prompt_override: str | None = None, use_tts: bool | None = None) -> None:
+        self._q.put((username, message, reply_cb, prompt_override, use_tts))
 
     def stop(self) -> None:
         self._q.put(None)
@@ -372,10 +372,10 @@ class AIResponseHandler:
             item = self._q.get()
             if item is None:
                 break
-            username, message, reply_cb, prompt_override = item
-            self._query(username, message, reply_cb=reply_cb, prompt_override=prompt_override)
+            username, message, reply_cb, prompt_override, use_tts = item
+            self._query(username, message, reply_cb=reply_cb, prompt_override=prompt_override, use_tts=use_tts)
 
-    def _query(self, username: str, message: str, reply_cb=None, prompt_override: str | None = None) -> None:
+    def _query(self, username: str, message: str, reply_cb=None, prompt_override: str | None = None, use_tts: bool | None = None) -> None:
         cfg           = self.get_config()
         provider      = cfg.get("provider", "Ollama")
         endpoint      = cfg.get("endpoint")      or "http://localhost:11434/v1/chat/completions"
@@ -385,7 +385,7 @@ class AIResponseHandler:
             prompt_override if prompt_override is not None
             else cfg.get("system_prompt")
         ) or "You are a helpful Twitch chat bot."
-        use_tts       = cfg.get("tts_ai", True)
+        _use_tts      = use_tts if use_tts is not None else cfg.get("tts_ai", True)
         fmt           = _PROVIDERS.get(provider, {}).get("fmt", "openai")
 
         try:
@@ -398,7 +398,7 @@ class AIResponseHandler:
                 self.log("[AI] Model returned an empty response.")
                 return
             self.log(f"[AI] → {reply}")
-            if use_tts:
+            if _use_tts:
                 self.tts.speak(reply)
             if reply_cb is not None:
                 try:
@@ -595,11 +595,12 @@ class DiscordClient:
         "All messages + mentions + replies",
     ]
 
-    def __init__(self, get_config, log, ai_handler: "AIResponseHandler", on_ready_cb=None) -> None:
+    def __init__(self, get_config, log, ai_handler: "AIResponseHandler", on_ready_cb=None, on_failure_cb=None) -> None:
         self.get_config = get_config  # callable → dict(discord_token, discord_channel_id, discord_trigger, discord_prompt)
         self.log = log
         self._ai = ai_handler
         self._on_ready_cb = on_ready_cb  # callable() — called when bot connects; safe to use self.after(0, ...) inside
+        self._on_failure_cb = on_failure_cb  # callable() — called when connection fails
         self._bot = None
         self._loop = None
         self._thread: threading.Thread | None = None
@@ -626,11 +627,16 @@ class DiscordClient:
     # ── internal ──────────────────────────────────────────────────────────────
 
     def _run(self) -> None:
+        on_ready_cb = self._on_ready_cb
+        on_failure_cb = self._on_failure_cb
+
         try:
             import discord
         except ImportError:
             self.log("[Discord] discord.py not installed — run: pip install discord.py")
             self._running = False
+            if on_failure_cb:
+                on_failure_cb()
             return
 
         cfg = self.get_config()
@@ -638,6 +644,8 @@ class DiscordClient:
         if not token:
             self.log("[Discord] No bot token configured — enter one in Connection Settings.")
             self._running = False
+            if on_failure_cb:
+                on_failure_cb()
             return
 
         self._loop = asyncio.new_event_loop()
@@ -652,11 +660,17 @@ class DiscordClient:
         ai = self._ai
         get_config = self.get_config
         log = self.log
-        on_ready_cb = self._on_ready_cb
 
         @bot.event
         async def on_ready():
             log(f"[Discord] Connected as {bot.user} (ID: {bot.user.id})")
+            cfg = get_config()
+            try:
+                channel_id = int(cfg.get("discord_channel_id", 0) or 0)
+                if channel_id == 0:
+                    log("[Discord] Warning: no channel ID configured — enter one in Connection Settings.")
+            except ValueError:
+                log("[Discord] Warning: invalid channel ID — enter a numeric channel ID in Connection Settings.")
             if on_ready_cb:
                 on_ready_cb()
 
@@ -669,13 +683,9 @@ class DiscordClient:
             try:
                 channel_id = int(cfg.get("discord_channel_id", 0) or 0)
             except ValueError:
-                log("[Discord] Invalid channel ID — enter a numeric channel ID in Connection Settings.")
                 return
 
-            if channel_id == 0:
-                log("[Discord] No channel ID configured — enter one in Connection Settings.")
-                return
-            if message.channel.id != channel_id:
+            if channel_id == 0 or message.channel.id != channel_id:
                 return
 
             trigger = cfg.get("discord_trigger", "All messages")
@@ -695,18 +705,23 @@ class DiscordClient:
                 )
 
             ai.handle(message.author.name, message.content,
-                      reply_cb=reply_cb, prompt_override=discord_prompt)
+                      reply_cb=reply_cb, prompt_override=discord_prompt, use_tts=False)
 
         try:
             self._loop.run_until_complete(bot.start(token))
         except discord.LoginFailure:
             self.log("[Discord] Login failed — check your bot token.")
+            if on_failure_cb:
+                on_failure_cb()
         except Exception as exc:
             if self._running:
                 self.log(f"[Discord] Error: {exc}")
+            if on_failure_cb:
+                on_failure_cb()
         finally:
             self._running = False
             _loop = self._loop
+            self._loop = None
             if _loop is not None:
                 try:
                     _loop.close()
@@ -1014,6 +1029,15 @@ class TwitchBotApp(ctk.CTk):
         )
         self._discord_trigger_combo.set(_saved_trigger)
         self._discord_trigger_combo.grid(row=r, column=1, sticky="w", padx=(0, 14), pady=5)
+        r += 1
+
+        ctk.CTkLabel(
+            tab,
+            text="⚠ Enable 'Message Content Intent' in your bot's Discord Developer Portal settings",
+            text_color="#f39c12",
+            font=ctk.CTkFont(size=11),
+            anchor="w",
+        ).grid(row=r, column=0, columnspan=2, sticky="w", padx=14, pady=(0, 4))
         r += 1
 
         # Shared prompt toggle
@@ -1507,9 +1531,6 @@ class TwitchBotApp(ctk.CTk):
             self._discord.disconnect()
         self._save_env(log=False)
         ai = self._ai
-        if not ai:
-            self._log("[Discord] AI handler not running — connect Twitch first or restart the app.")
-            return
 
         def on_ready_cb():
             try:
@@ -1518,11 +1539,18 @@ class TwitchBotApp(ctk.CTk):
             except Exception:
                 pass
 
+        def on_failure_cb():
+            try:
+                self.after(0, self._discord_reset_ui)
+            except Exception:
+                pass
+
         self._discord = DiscordClient(
             get_config=self._get_discord_cfg,
             log=self._log,
             ai_handler=ai,
             on_ready_cb=on_ready_cb,
+            on_failure_cb=on_failure_cb,
         )
         self._discord.connect()
         self._btn_discord_connect.configure(state="disabled")
@@ -1537,6 +1565,13 @@ class TwitchBotApp(ctk.CTk):
         self._btn_discord_disconnect.configure(state="disabled")
         self._lbl_discord_status.configure(text="Discord: ● Off", text_color=OFF_FG)
         self._log("[Discord] Disconnected.")
+
+    def _discord_reset_ui(self) -> None:
+        """Reset Discord UI to disconnected state (called after connection failure)."""
+        self._discord = None
+        self._btn_discord_connect.configure(state="normal")
+        self._btn_discord_disconnect.configure(state="disabled")
+        self._lbl_discord_status.configure(text="Discord: ● Error", text_color=OFF_FG)
 
     def _panic_tts(self) -> None:
         if self._tts:
