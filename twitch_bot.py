@@ -1004,6 +1004,12 @@ class TwitchBotApp(ctk.CTk):
             command=self._save_prompt,
         ).pack(side="left")
 
+        ctk.CTkButton(
+            ctrl_bar, text="+ New", width=70,
+            fg_color=_GREEN[0], hover_color=_GREEN[1],
+            command=self._new_prompt,
+        ).pack(side="left", padx=(6, 0))
+
         self._system_prompt = ctk.CTkTextbox(
             tab, font=ctk.CTkFont(family="Courier", size=12),
         )
@@ -1541,6 +1547,21 @@ class TwitchBotApp(ctk.CTk):
         self._prompt_combo.configure(values=self._list_prompts())
         self._prompt_combo.set(safe)
         self._log(f"[Prompts] Saved → {safe}")
+
+    def _new_prompt(self) -> None:
+        dialog = ctk.CTkInputDialog(text="Name for new prompt:", title="New Prompt")
+        name = dialog.get_input()
+        if not name:
+            return
+        safe = re.sub(r'[^\w\s\-]', '', name.strip()).strip()
+        if not safe:
+            self._log("[Prompts] Invalid name — use letters, numbers, spaces, or dashes.")
+            return
+        self._system_prompt.delete("1.0", "end")
+        self._prompt_combo.configure(values=self._list_prompts())
+        self._prompt_combo.set(safe)
+        self._sync_prompt_cache()
+        self._log(f"[Prompts] New prompt '{safe}' — edit and click Save.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Thread-safe logging
