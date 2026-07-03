@@ -12,8 +12,8 @@ THREADING MODEL
                 │   auto-reconnects on failure; parses PRIVMSG → _dispatch()
   AI thread     │ AIResponseHandler._worker() — HTTP to local LLM
                 │   dequeues (username, message) pairs, POSTs, enqueues TTS
-  TTS thread    │ TTSEngine._worker() — Piper subprocess + pygame playback
-                │   dequeues text, runs piper binary, plays .wav
+  TTS thread    │ TTSEngine._worker() — Piper subprocess → base64 WAV → SSE
+                │   dequeues text, runs piper binary, broadcasts audio to browser
   Input threads │ Short-lived daemon threads per key press (GameInputController)
 
 Cross-thread communication:
@@ -47,7 +47,6 @@ import requests
 # ── Optional dependencies (graceful degradation) ────────────────────────────
 try:
     import pygame
-    pygame.mixer.init(frequency=22050, size=-16, channels=1, buffer=512)
     HAS_PYGAME = True
 except Exception:
     HAS_PYGAME = False
@@ -282,7 +281,6 @@ class TTSEngine:
                     os.unlink(tmp_path)
                 except OSError:
                     pass
-
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -833,7 +831,7 @@ class WebApp:
 
     def _log_platform_info(self) -> None:
         libs = []
-        libs.append("pygame ✓" if HAS_PYGAME else "pygame ✗ (no audio)")
+        libs.append("pygame ✓" if HAS_PYGAME else "pygame ✗")
         libs.append("pydirectinput ✓" if HAS_PYDIRECTINPUT else "pydirectinput ✗")
         libs.append("pynput ✓" if HAS_PYNPUT else "pynput ✗")
         self._log(f"[System] Libraries: {', '.join(libs)}")
