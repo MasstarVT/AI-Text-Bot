@@ -174,12 +174,17 @@ class TTSEngine:
 
     def panic(self) -> None:
         """Immediately silence all audio and drain the pending queue."""
-        # Drain pending items
+        # Drain pending items; preserve any stop() sentinel so the worker can exit.
+        saw_stop = False
         while True:
             try:
-                self._q.get_nowait()
+                item = self._q.get_nowait()
+                if item is None:
+                    saw_stop = True
             except queue.Empty:
                 break
+        if saw_stop:
+            self._q.put(None)
         # Signal the play loop to abort
         self._stop_event.set()
         # Stop pygame playback
@@ -201,7 +206,9 @@ class TTSEngine:
             item = self._q.get()
             if item is None:
                 break
-            self._stop_event.clear()  # reset panic flag only when a new item starts
+            if self._stop_event.is_set():
+                self._stop_event.clear()  # consume panic — skip this item, resume on next
+                continue
             self._synthesize(item)
 
     def _synthesize(self, text: str) -> None:
@@ -241,7 +248,12 @@ class TTSEngine:
                 _, stderr_bytes = proc.communicate(input=text.encode("utf-8"), timeout=30)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                proc.communicate()
+                try:
+                    proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    threading.Thread(
+                        target=proc.communicate, daemon=True,
+                    ).start()
                 self.log("[TTS] Piper synthesis timed out.")
                 return
             finally:
@@ -252,20 +264,19 @@ class TTSEngine:
             if self._stop_event.is_set():
                 return
 
-            if proc.returncode not in (0, -9):  # -9 = killed by panic
-                err = stderr_bytes.decode("utf-8", errors="replace").strip()
-                self.log(f"[TTS] Piper error: {err}")
+            if proc.returncode == -9:
+                self.log("[TTS] Piper was killed unexpectedly (SIGKILL).")
                 return
 
-            if proc.returncode == -9:
+            if proc.returncode != 0:
+                err = stderr_bytes.decode("utf-8", errors="replace").strip()
+                self.log(f"[TTS] Piper error: {err}")
                 return
 
             self._play(tmp_path)
 
         except FileNotFoundError:
             self.log(f"[TTS] Piper executable not found: '{piper_exe}'")
-        except subprocess.TimeoutExpired:
-            self.log("[TTS] Piper synthesis timed out.")
         except Exception as exc:
             self.log(f"[TTS] Unexpected error: {exc}")
         finally:
@@ -298,12 +309,14 @@ class TTSEngine:
         # pygame.mixer unavailable or failed — try system audio players
         for player in self._SYSTEM_PLAYERS:
             try:
-                proc = subprocess.Popen(
-                    [player, wav_path],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
                 with self._proc_lock:
+                    if self._stop_event.is_set():
+                        return
+                    proc = subprocess.Popen(
+                        [player, wav_path],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
                     self._current_proc = proc
                 try:
                     proc.wait(timeout=30)
@@ -463,9 +476,10 @@ class TwitchIRCClient:
 
     def say(self, channel: str, text: str) -> None:
         """Send a chat message to the channel (called from any thread)."""
-        if self._sock:
+        sock = self._sock  # snapshot to avoid TOCTOU with disconnect()
+        if sock:
             try:
-                self._sock.sendall(f"PRIVMSG #{channel} :{text}\r\n".encode())
+                sock.sendall(f"PRIVMSG #{channel} :{text}\r\n".encode())
             except OSError as exc:
                 self.log(f"[IRC] Send failed: {exc}")
 
@@ -585,6 +599,10 @@ class TwitchBotApp(ctk.CTk):
 
         # Thread-safe log queue — only the GUI thread reads from it
         self._log_queue: queue.Queue[str] = queue.Queue()
+
+        # Thread-safe system-prompt cache: written by GUI thread, read by AI worker
+        self._prompt_lock:  threading.Lock = threading.Lock()
+        self._prompt_cache: str = ""
 
         # Service handles
         self._irc: TwitchIRCClient | None = None
@@ -1124,8 +1142,9 @@ class TwitchBotApp(ctk.CTk):
             self._ai.stop()
             self._ai = None
 
-    # ── Config getters (called on worker threads; simple .get() reads are
-    #    safe under CPython's GIL for non-mutating reads) ─────────────────────
+    # ── Config getters (called on worker threads)
+    #    CTkEntry/CTkComboBox/BooleanVar.get() are GIL-safe scalar reads.
+    #    CTkTextbox.get(index, index) is a Tcl round-trip — use _prompt_cache instead. ────
 
     def _get_tts_cfg(self) -> dict:
         return {
@@ -1135,14 +1154,22 @@ class TwitchBotApp(ctk.CTk):
         }
 
     def _get_ai_cfg(self) -> dict:
+        with self._prompt_lock:
+            prompt = self._prompt_cache
         return {
             "provider":      self._provider_combo.get(),
             "endpoint":      self.e_endpoint.get().strip(),
             "model":         self.e_model.get().strip(),
             "api_key":       self.e_api_key.get().strip(),
-            "system_prompt": self._system_prompt.get("1.0", "end-1c"),
+            "system_prompt": prompt,
             "tts_ai":        self._var_tts_ai.get(),
         }
+
+    def _sync_prompt_cache(self) -> None:
+        """Snapshot the system-prompt textbox on the GUI thread for safe worker access."""
+        text = self._system_prompt.get("1.0", "end-1c")
+        with self._prompt_lock:
+            self._prompt_cache = text
 
     def _get_irc_creds(self) -> dict:
         return {
@@ -1252,8 +1279,9 @@ class TwitchBotApp(ctk.CTk):
                 self._ai_counter = 0
                 triggered = True
 
-        if triggered:
-            self._ai.handle(username, message)
+        ai = self._ai
+        if triggered and ai:
+            ai.handle(username, message)
 
     # ══════════════════════════════════════════════════════════════════════════
     # Command-mapping UI
@@ -1491,6 +1519,7 @@ class TwitchBotApp(ctk.CTk):
             content = f.read()
         self._system_prompt.delete("1.0", "end")
         self._system_prompt.insert("1.0", content)
+        self._sync_prompt_cache()
         self._log(f"[Prompts] Loaded ← {name}")
 
     def _save_prompt(self) -> None:
@@ -1538,6 +1567,7 @@ class TwitchBotApp(ctk.CTk):
             self._console.see("end")
             self._console.configure(state="disabled")
 
+        self._sync_prompt_cache()
         self.after(80, self._poll_logs)
 
     def _clear_console(self) -> None:
