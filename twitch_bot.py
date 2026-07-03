@@ -27,6 +27,7 @@ Cross-thread communication:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -1385,6 +1386,8 @@ class TwitchBotApp(ctk.CTk):
         try:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
+            if not isinstance(data, dict):
+                raise ValueError(f"expected object, got {type(data).__name__}")
         except Exception as e:
             self._log(f"[Presets] Failed to load '{name}': {e}")
             return
