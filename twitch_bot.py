@@ -462,11 +462,12 @@ class TwitchIRCClient:
     Parses PRIVMSG lines and calls on_message(username, text) for each chat message.
     """
 
-    def __init__(self, get_creds, log, on_message, on_ready=None) -> None:
-        self.get_creds  = get_creds       # callable → dict(channel, username, token)
-        self.log        = log
-        self.on_message = on_message      # callback(username: str, message: str)
-        self.on_ready   = on_ready        # called once when JOIN is confirmed
+    def __init__(self, get_creds, log, on_message, on_ready=None, on_reconnecting=None) -> None:
+        self.get_creds       = get_creds       # callable → dict(channel, username, token)
+        self.log             = log
+        self.on_message      = on_message      # callback(username: str, message: str)
+        self.on_ready        = on_ready        # called once when JOIN is confirmed
+        self.on_reconnecting = on_reconnecting # called on unexpected disconnect (before backoff sleep)
         self._sock: socket.socket | None = None
         self._running = False
         self._ready_fired = False
@@ -496,13 +497,18 @@ class TwitchIRCClient:
     # ── reconnect loop ────────────────────────────────────────────────────────
 
     def _run(self) -> None:
+        delay = 1
         while self._running:
             try:
                 self._session()
+                delay = 1  # reset backoff after a clean session
             except Exception as exc:
                 if self._running:
-                    self.log(f"[IRC] Disconnected ({exc}). Reconnecting in {RECONNECT_DELAY}s…")
-                    time.sleep(RECONNECT_DELAY)
+                    self.log(f"[IRC] Disconnected ({exc}). Reconnecting in {delay}s…")
+                    if self.on_reconnecting:
+                        self.on_reconnecting()
+                    time.sleep(delay)
+                    delay = min(delay * 2, 30)
 
     def _session(self) -> None:
         self._ready_fired = False
@@ -1389,6 +1395,20 @@ class WebApp:
             self._log(f"[Presets] Saved → {safe}")
             return _flask.jsonify({"ok": True, "name": safe})
 
+        # ── voices ────────────────────────────────────────────────────────────
+
+        @app.route("/api/voices")
+        def api_voices():
+            voices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Voices")
+            try:
+                names = sorted(
+                    f[:-5] for f in os.listdir(voices_dir)
+                    if f.endswith(".onnx")
+                )
+            except FileNotFoundError:
+                names = []
+            return _flask.jsonify({"voices": names})
+
         # ── file browser ──────────────────────────────────────────────────────
 
         @app.route("/api/browse")
@@ -1456,6 +1476,7 @@ class WebApp:
             log=self._log,
             on_message=self._dispatch,
             on_ready=self._on_irc_ready,
+            on_reconnecting=self._on_irc_reconnecting,
         )
         self._irc.connect()
         self._log("[System] Connecting to Twitch IRC…")
@@ -1473,6 +1494,11 @@ class WebApp:
     def _on_irc_ready(self) -> None:
         with self._config_lock:
             self._config["twitch_status"] = "online"
+        self._broadcast_status()
+
+    def _on_irc_reconnecting(self) -> None:
+        with self._config_lock:
+            self._config["twitch_status"] = "connecting"
         self._broadcast_status()
 
     def _discord_connect(self) -> None:
