@@ -383,8 +383,10 @@ class AIResponseHandler:
         self._q: queue.Queue[tuple | None] = queue.Queue()
         threading.Thread(target=self._worker, name="AI-Worker", daemon=True).start()
 
-    def handle(self, username: str, message: str, reply_cb=None, prompt_override: str | None = None, use_tts: bool | None = None) -> None:
-        self._q.put((username, message, reply_cb, prompt_override, use_tts))
+    def handle(self, username: str, message: str, reply_cb=None,
+               prompt_override: str | None = None, use_tts: bool | None = None,
+               context: list | None = None) -> None:
+        self._q.put((username, message, reply_cb, prompt_override, use_tts, context))
 
     def stop(self) -> None:
         self._q.put(None)
@@ -396,14 +398,14 @@ class AIResponseHandler:
         return len(stripped) >= 8 and stripped[-1] in '.!?'
 
     def _stream_openai(self, endpoint: str, model: str, api_key: str,
-                       system_prompt: str, username: str, message: str,
+                       system_prompt: str, user_content: str,
                        tts_cb) -> str:
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         payload = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": f"{username}: {message}"},
+                {"role": "user",   "content": user_content},
             ],
             "stream": True,
             "max_tokens": 1500,
@@ -449,7 +451,7 @@ class AIResponseHandler:
         return "".join(full_tokens).strip()
 
     def _stream_anthropic(self, endpoint: str, model: str, api_key: str,
-                          system_prompt: str, username: str, message: str,
+                          system_prompt: str, user_content: str,
                           tts_cb) -> str:
         headers = {
             "x-api-key":         api_key,
@@ -461,7 +463,7 @@ class AIResponseHandler:
             "max_tokens": 1500,
             "stream":     True,
             "system":     system_prompt,
-            "messages":   [{"role": "user", "content": f"{username}: {message}"}],
+            "messages":   [{"role": "user", "content": user_content}],
         }
         resp = requests.post(endpoint, headers=headers, json=payload,
                              timeout=90, stream=True)
@@ -510,17 +512,20 @@ class AIResponseHandler:
             item = self._q.get()
             if item is None:
                 break
-            username, message, reply_cb, prompt_override, use_tts = item
+            username, message, reply_cb, prompt_override, use_tts, context = item
             if self._on_thinking:
                 self._on_thinking(True)
             try:
                 self._query(username, message, reply_cb=reply_cb,
-                            prompt_override=prompt_override, use_tts=use_tts)
+                            prompt_override=prompt_override, use_tts=use_tts,
+                            context=context)
             finally:
                 if self._on_thinking:
                     self._on_thinking(False)
 
-    def _query(self, username: str, message: str, reply_cb=None, prompt_override: str | None = None, use_tts: bool | None = None) -> None:
+    def _query(self, username: str, message: str, reply_cb=None,
+               prompt_override: str | None = None, use_tts: bool | None = None,
+               context: list | None = None) -> None:
         cfg           = self.get_config()
         provider      = cfg.get("provider", "Ollama")
         endpoint      = cfg.get("endpoint")      or "http://localhost:11434/v1/chat/completions"
@@ -533,12 +538,18 @@ class AIResponseHandler:
         _use_tts      = use_tts if use_tts is not None else cfg.get("tts_ai", True)
         fmt           = _PROVIDERS.get(provider, {}).get("fmt", "openai")
 
+        if context:
+            ctx_lines    = "\n".join(f"{u}: {m}" for u, m in context)
+            user_content = f"[Recent chat]\n{ctx_lines}\n\n{username}: {message}"
+        else:
+            user_content = f"{username}: {message}"
+
         try:
             tts_cb = self.tts.speak if _use_tts else None
             if fmt == "anthropic":
-                reply = self._stream_anthropic(endpoint, model, api_key, system_prompt, username, message, tts_cb)
+                reply = self._stream_anthropic(endpoint, model, api_key, system_prompt, user_content, tts_cb)
             else:
-                reply = self._stream_openai(endpoint, model, api_key, system_prompt, username, message, tts_cb)
+                reply = self._stream_openai(endpoint, model, api_key, system_prompt, user_content, tts_cb)
 
             if not reply:
                 self.log("[AI] Model returned an empty response.")
@@ -935,6 +946,9 @@ class WebApp:
         "chat_commands":         {},
         # ── scheduled messages ─────────────────────────────────────────────────
         "scheduled_msgs": [],
+        # ── chat context ───────────────────────────────────────────────────────
+        "ai_context_enabled": False,
+        "ai_context_size":    5,
     }
 
     def __init__(self) -> None:
@@ -1008,6 +1022,8 @@ class WebApp:
             "chat_commands_enabled": settings.get("chat_commands_enabled", False),
             "chat_commands":         dict(settings.get("chat_commands", {})),
             "scheduled_msgs": list(settings.get("scheduled_msgs", [])),
+            "ai_context_enabled": settings.get("ai_context_enabled", False),
+            "ai_context_size":    int(settings.get("ai_context_size", 5)),
             "system_prompt":    "",
             # ── connection status ───────────────────────────────────────────
             "twitch_status":    "off",   # off / connecting / online
@@ -1015,6 +1031,8 @@ class WebApp:
         }
         self._config_lock = threading.Lock()
         self._ai_counter  = 0
+        self._chat_history: collections.deque[tuple[str, str]] = collections.deque(maxlen=20)
+        self._history_lock  = threading.Lock()
         self._last_thanks_time: float = 0.0
         self._thanks_lock = threading.Lock()
 
@@ -1274,6 +1292,8 @@ class WebApp:
             "chat_commands_enabled": c.get("chat_commands_enabled", False),
             "chat_commands":         c.get("chat_commands",         {}),
             "scheduled_msgs": c.get("scheduled_msgs", []),
+            "ai_context_enabled": c.get("ai_context_enabled", False),
+            "ai_context_size":    c.get("ai_context_size",    5),
         }
         with open(self._settings_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -1472,6 +1492,7 @@ class WebApp:
             "ignore_list_enabled", "ignore_list",
             "chat_commands_enabled", "chat_commands",
             "scheduled_msgs",
+            "ai_context_enabled", "ai_context_size",
         )
 
         @app.route("/api/settings", methods=["GET"])
@@ -1483,7 +1504,7 @@ class WebApp:
         @app.route("/api/settings", methods=["POST"])
         def api_settings_post():
             data = _flask.request.get_json(force=True, silent=True) or {}
-            _INT_KEYS = {"every_n", "min_bits", "thanks_cooldown_secs"}
+            _INT_KEYS = {"every_n", "min_bits", "thanks_cooldown_secs", "ai_context_size"}
             _BOOL_KEYS = {
                 "trigger_every_n", "trigger_mentions", "trigger_bits",
                 "trigger_points", "tts_ai", "discord_use_shared_prompt",
@@ -1493,6 +1514,7 @@ class WebApp:
                 "thanks_cooldown_enabled",
                 "ignore_list_enabled",
                 "chat_commands_enabled",
+                "ai_context_enabled",
             }
             with self._config_lock:
                 for k in _SETTINGS_KEYS:
@@ -1840,6 +1862,9 @@ class WebApp:
         if ignore_enabled and username.lower() in ignore_list:
             return
 
+        with self._history_lock:
+            self._chat_history.append((username, message))
+
         self._route_chat_commands(username, message)
         self._route_plays(username, message)
         self._route_ai(username, message, bits, reward_id)
@@ -1895,9 +1920,20 @@ class WebApp:
             trig_points      = self._config.get("trigger_points",    False)
             required_reward  = self._config.get("reward_id",         "")
             bot_user         = self._config.get("twitch_username",   "").lower()
+            context_enabled  = self._config.get("ai_context_enabled", False)
+            context_size     = int(self._config.get("ai_context_size", 5))
 
         if not ai_enabled:
             return
+
+        context: list[tuple[str, str]] | None = None
+        if context_enabled and context_size > 0:
+            with self._history_lock:
+                hist = list(self._chat_history)
+            # exclude the message we're about to process (it was just appended)
+            if hist and hist[-1] == (username, message):
+                hist = hist[:-1]
+            context = hist[-context_size:] if hist else []
 
         triggered = False
 
@@ -1923,7 +1959,7 @@ class WebApp:
 
         ai = self._ai
         if triggered and ai:
-            ai.handle(username, message)
+            ai.handle(username, message, context=context)
 
     def _handle_event(self, event_type: str, username: str, extra: dict) -> None:
         with self._config_lock:

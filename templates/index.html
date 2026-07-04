@@ -290,6 +290,19 @@ textarea{resize:vertical;font-family:var(--mono)}
             <button class="btn btn-neutral btn-sm" onclick="refreshModels()">Refresh</button>
           </div>
         </div>
+        <div class="divider"></div>
+        <div class="section-lbl">Chat Context</div>
+        <label class="row-check">
+          <input type="checkbox" id="s-ctx-enabled" onchange="toggleCtx()">
+          Include recent chat history in AI prompt
+        </label>
+        <div id="s-ctx-wrap" style="display:none">
+          <div class="field-row" style="margin-top:6px">
+            <label>Messages to include</label>
+            <input type="number" id="s-ctx-size" min="1" max="20" style="width:60px">
+          </div>
+          <div class="hint">The last N chat messages are prepended to the AI's context window.</div>
+        </div>
       </div>
 
       <!-- Discord tab -->
@@ -904,6 +917,9 @@ function openSettings() {
     Object.entries(s.chat_commands || {}).forEach(([cmd, resp]) => addCmdRow(cmd, resp));
     el('sched-rows').innerHTML = '';
     (s.scheduled_msgs || []).forEach(e => addSchedRow(e.text, e.interval));
+    el('s-ctx-enabled').checked = !!s.ai_context_enabled;
+    el('s-ctx-size').value      = s.ai_context_size ?? 5;
+    toggleCtx();
     // provider
     if (s.llm_provider) {
       el('s-provider').value = s.llm_provider;
@@ -968,6 +984,8 @@ function saveSettings() {
     chat_commands_enabled: el('s-cmd-enabled').checked,
     chat_commands:         getChatCommands(),
     scheduled_msgs: getSchedMsgs(),
+    ai_context_enabled: el('s-ctx-enabled').checked,
+    ai_context_size:    parseInt(el('s-ctx-size').value) || 5,
   };
   api('/api/settings','POST', body).then(() => closeSettings());
 }
@@ -1067,6 +1085,10 @@ function getSchedMsgs() {
     const inputs = tr.querySelectorAll('input');
     return { text: inputs[0].value.trim(), interval: parseInt(inputs[1].value) || 30 };
   }).filter(e => e.text);
+}
+
+function toggleCtx() {
+  el('s-ctx-wrap').style.display = el('s-ctx-enabled').checked ? '' : 'none';
 }
 
 function toggleDiscordPrompt() {
