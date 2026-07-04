@@ -1820,7 +1820,7 @@ class WebApp:
         if not ai:
             return
 
-        if event_type not in _THANKS_TEMPLATES:
+        if event_type not in _THANKS_TEMPLATES:  # guard for future event types not yet in templates
             return
         msg = _THANKS_TEMPLATES[event_type](username, extra)
         self._log(f"[Thanks] {event_type} from {username}")

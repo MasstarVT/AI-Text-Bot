@@ -10,5 +10,15 @@
   "tts_ai": true,
   "plays_enabled": false,
   "command_map": {},
-  "last_prompt": "Test"
+  "last_prompt": "Test",
+  "thanks_enabled": false,
+  "thanks_sub": true,
+  "thanks_resub": true,
+  "thanks_gift": true,
+  "thanks_mystery": true,
+  "thanks_bits": false,
+  "thanks_raid": true,
+  "thanks_chat": true,
+  "thanks_tts": true,
+  "thanks_prompt": ""
 }
