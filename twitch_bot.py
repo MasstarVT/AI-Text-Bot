@@ -1827,6 +1827,9 @@ class WebApp:
         with self._config_lock:
             if not self._config.get("thanks_enabled", False):
                 return
+            if (self._config.get("ignore_list_enabled", False)
+                    and username.lower() in self._config.get("ignore_list", [])):
+                return
             event_map = {
                 "sub":         self._config.get("thanks_sub",     True),
                 "resub":       self._config.get("thanks_resub",   True),
