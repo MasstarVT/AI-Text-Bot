@@ -925,6 +925,9 @@ class WebApp:
         "thanks_tts":               True,
         "thanks_use_shared_prompt": False,
         "thanks_prompt":            "",
+        # ── ignore list ────────────────────────────────────────────────────────
+        "ignore_list_enabled": False,
+        "ignore_list":         [],
     }
 
     def __init__(self) -> None:
@@ -991,6 +994,8 @@ class WebApp:
             "thanks_tts":               settings.get("thanks_tts",               True),
             "thanks_use_shared_prompt": settings.get("thanks_use_shared_prompt", False),
             "thanks_prompt":            settings.get("thanks_prompt",            ""),
+            "ignore_list_enabled": settings.get("ignore_list_enabled", False),
+            "ignore_list":         [str(u).lower().strip() for u in settings.get("ignore_list", []) if u],
             "system_prompt":    "",
             # ── connection status ───────────────────────────────────────────
             "twitch_status":    "off",   # off / connecting / online
@@ -1214,6 +1219,9 @@ class WebApp:
             "thanks_tts":               c.get("thanks_tts",               True),
             "thanks_use_shared_prompt": c.get("thanks_use_shared_prompt", False),
             "thanks_prompt":            c.get("thanks_prompt",            ""),
+            # ── ignore list ────────────────────────────────────────────────────
+            "ignore_list_enabled": c.get("ignore_list_enabled", False),
+            "ignore_list":         c.get("ignore_list",         []),
         }
         with open(self._settings_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -1408,6 +1416,7 @@ class WebApp:
             "thanks_enabled", "thanks_sub", "thanks_resub", "thanks_gift",
             "thanks_mystery", "thanks_bits", "thanks_raid", "thanks_chat", "thanks_tts",
             "thanks_use_shared_prompt", "thanks_prompt",
+            "ignore_list_enabled", "ignore_list",
         )
 
         @app.route("/api/settings", methods=["GET"])
@@ -1426,11 +1435,15 @@ class WebApp:
                 "thanks_enabled", "thanks_sub", "thanks_resub", "thanks_gift",
                 "thanks_mystery", "thanks_bits", "thanks_raid", "thanks_chat", "thanks_tts",
                 "thanks_use_shared_prompt",
+                "ignore_list_enabled",
             }
             with self._config_lock:
                 for k in _SETTINGS_KEYS:
                     if k in data:
-                        if k in _INT_KEYS:
+                        if k == "ignore_list":
+                            if isinstance(data[k], list):
+                                self._config[k] = [str(u).lower().strip() for u in data[k] if u]
+                        elif k in _INT_KEYS:
                             try:
                                 self._config[k] = int(data[k])
                             except (TypeError, ValueError):
@@ -1736,6 +1749,14 @@ class WebApp:
         self._log(f"[Chat] {username}{tag}: {message}")
         if reward_id:
             self._log(f"[Chat] Reward ID: {reward_id}")
+
+        # ── ignore list ────────────────────────────────────────────────────────
+        with self._config_lock:
+            ignore_enabled = self._config.get("ignore_list_enabled", False)
+            ignore_list    = self._config.get("ignore_list", [])
+        if ignore_enabled and username.lower() in ignore_list:
+            return
+
         self._route_plays(username, message)
         self._route_ai(username, message, bits, reward_id)
         if bits > 0:
