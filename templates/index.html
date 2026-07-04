@@ -715,8 +715,9 @@ function refreshVoices() {
       o.textContent = name;
       sel.appendChild(o);
     });
-    // Re-select if current model matches a voice name
-    const match = (r.voices || []).find(n => cur.includes(n + '.onnx'));
+    // Re-select if current model matches a voice name (exact basename comparison)
+    const basename = cur.split('/').pop();
+    const match = (r.voices || []).find(n => basename === n + '.onnx');
     if (match) sel.value = match;
   });
 }

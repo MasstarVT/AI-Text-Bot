@@ -84,6 +84,17 @@ _CLAUDE_MODELS = [
 ]
 
 
+def _scan_voices_dir(voices_dir: str) -> list[str]:
+    """Return sorted .onnx voice names (without extension) from voices_dir."""
+    try:
+        return sorted(
+            f[:-5] for f in os.listdir(voices_dir)
+            if f.endswith(".onnx")
+        )
+    except FileNotFoundError:
+        return []
+
+
 class _BoolGetter:
     """Minimal stand-in for ctk.BooleanVar used by GameInputController."""
     __slots__ = ("_v",)
@@ -1399,14 +1410,7 @@ class WebApp:
         @app.route("/api/voices")
         def api_voices():
             voices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Voices")
-            try:
-                names = sorted(
-                    f[:-5] for f in os.listdir(voices_dir)
-                    if f.endswith(".onnx")
-                )
-            except FileNotFoundError:
-                names = []
-            return _flask.jsonify({"voices": names})
+            return _flask.jsonify({"voices": _scan_voices_dir(voices_dir)})
 
         # ── file browser ──────────────────────────────────────────────────────
 

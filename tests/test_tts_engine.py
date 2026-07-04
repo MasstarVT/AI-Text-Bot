@@ -139,33 +139,27 @@ class TestTTSEnginePersistentPiper(unittest.TestCase):
 
 class TestVoicesEndpoint(unittest.TestCase):
     def test_voices_lists_onnx_files(self):
-        """GET /api/voices returns .onnx filenames from the Voices/ directory."""
+        """_scan_voices_dir returns .onnx filenames (without extension), sorted, no other files."""
         import sys, os
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
         import twitch_bot
-        import flask as _flask
 
         with patch("os.listdir", return_value=["voice1.onnx", "voice1.onnx.json", "voice2.onnx", "readme.txt"]):
-            with patch("os.path.isdir", return_value=True):
-                flask_app = _flask.Flask("test")
+            result = twitch_bot._scan_voices_dir("/fake/voices")
 
-                @flask_app.route("/api/voices")
-                def api_voices():
-                    voices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Voices")
-                    try:
-                        names = sorted(
-                            f[:-5] for f in os.listdir(voices_dir)
-                            if f.endswith(".onnx")
-                        )
-                    except FileNotFoundError:
-                        names = []
-                    return _flask.jsonify({"voices": names})
+        self.assertIn("voice1", result)
+        self.assertIn("voice2", result)
+        self.assertNotIn("voice1.onnx.json", result)
+        self.assertNotIn("readme.txt", result)
+        self.assertEqual(result, sorted(result))
 
-                with flask_app.test_client() as c:
-                    resp = c.get("/api/voices")
-                    data = resp.get_json()
+    def test_voices_missing_dir(self):
+        """_scan_voices_dir returns empty list when Voices/ directory doesn't exist."""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        import twitch_bot
 
-        self.assertIn("voice1", data["voices"])
-        self.assertIn("voice2", data["voices"])
-        self.assertNotIn("voice1.onnx.json", data["voices"])
-        self.assertNotIn("readme.txt", data["voices"])
+        with patch("os.listdir", side_effect=FileNotFoundError):
+            result = twitch_bot._scan_voices_dir("/fake/missing")
+
+        self.assertEqual(result, [])
