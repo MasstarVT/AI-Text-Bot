@@ -318,12 +318,19 @@ textarea{resize:vertical;font-family:var(--mono)}
             <button class="btn btn-neutral btn-sm" onclick="openBrowser('s-piper-exe')">Browse</button>
           </div>
         </div>
-        <div class="field-row"><label>Voice Model (.onnx)</label>
+        <div class="field-row"><label>Voice Model</label>
+          <div class="field-with-btn">
+            <select id="s-voice-select" onchange="onVoiceSelect(this.value)" style="flex:1"></select>
+            <button class="btn btn-neutral btn-sm" onclick="refreshVoices()">&#8635;</button>
+          </div>
+        </div>
+        <div class="field-row"><label>Custom path (.onnx)</label>
           <div class="field-with-btn">
             <input id="s-piper-model" type="text" placeholder="/path/to/voice.onnx">
             <button class="btn btn-neutral btn-sm" onclick="openBrowser('s-piper-model')">Browse</button>
           </div>
         </div>
+        <div class="hint">Select a voice above or enter a full path manually.</div>
         <div class="field-row"><label>Model Config (.json)</label>
           <div class="field-with-btn">
             <input id="s-piper-cfg" type="text" placeholder="/path/to/voice.onnx.json (optional)">
@@ -696,6 +703,30 @@ function refreshPromptList() {
   });
 }
 
+// ── voice model dropdown ──────────────────────────────────────────────────
+function refreshVoices() {
+  api('/api/voices').then(r => {
+    const sel = el('s-voice-select');
+    const cur = el('s-piper-model').value;
+    sel.innerHTML = '<option value="">— pick a voice —</option>';
+    (r.voices || []).forEach(name => {
+      const o = document.createElement('option');
+      o.value = name;
+      o.textContent = name;
+      sel.appendChild(o);
+    });
+    // Re-select if current model matches a voice name
+    const match = (r.voices || []).find(n => cur.includes(n + '.onnx'));
+    if (match) sel.value = match;
+  });
+}
+
+function onVoiceSelect(name) {
+  if (!name) return;
+  el('s-piper-model').value = 'Voices/' + name + '.onnx';
+  el('s-piper-cfg').value   = 'Voices/' + name + '.onnx.json';
+}
+
 function loadPrompt(name) {
   if (!name) return;
   api(`/api/prompts/${encodeURIComponent(name)}`).then(r => {
@@ -761,6 +792,7 @@ function showTab(name) {
   document.querySelectorAll('.tab').forEach(b => {
     if (b.textContent.toLowerCase().startsWith(name)) b.classList.add('active');
   });
+  if (name === 'tts') refreshVoices();
 }
 
 function saveSettings() {

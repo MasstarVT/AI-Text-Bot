@@ -135,3 +135,37 @@ class TestTTSEnginePersistentPiper(unittest.TestCase):
 
         self.assertEqual(len(received), 0)
         self.assertTrue(any("No voice model" in l for l in logs))
+
+
+class TestVoicesEndpoint(unittest.TestCase):
+    def test_voices_lists_onnx_files(self):
+        """GET /api/voices returns .onnx filenames from the Voices/ directory."""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        import twitch_bot
+        import flask as _flask
+
+        with patch("os.listdir", return_value=["voice1.onnx", "voice1.onnx.json", "voice2.onnx", "readme.txt"]):
+            with patch("os.path.isdir", return_value=True):
+                flask_app = _flask.Flask("test")
+
+                @flask_app.route("/api/voices")
+                def api_voices():
+                    voices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Voices")
+                    try:
+                        names = sorted(
+                            f[:-5] for f in os.listdir(voices_dir)
+                            if f.endswith(".onnx")
+                        )
+                    except FileNotFoundError:
+                        names = []
+                    return _flask.jsonify({"voices": names})
+
+                with flask_app.test_client() as c:
+                    resp = c.get("/api/voices")
+                    data = resp.get_json()
+
+        self.assertIn("voice1", data["voices"])
+        self.assertIn("voice2", data["voices"])
+        self.assertNotIn("voice1.onnx.json", data["voices"])
+        self.assertNotIn("readme.txt", data["voices"])
