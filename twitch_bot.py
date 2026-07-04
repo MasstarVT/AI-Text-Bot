@@ -925,6 +925,8 @@ class WebApp:
         "thanks_tts":               True,
         "thanks_use_shared_prompt": False,
         "thanks_prompt":            "",
+        "thanks_cooldown_enabled": False,
+        "thanks_cooldown_secs":    30,
         # ── ignore list ────────────────────────────────────────────────────────
         "ignore_list_enabled": False,
         "ignore_list":         [],
@@ -994,6 +996,8 @@ class WebApp:
             "thanks_tts":               settings.get("thanks_tts",               True),
             "thanks_use_shared_prompt": settings.get("thanks_use_shared_prompt", False),
             "thanks_prompt":            settings.get("thanks_prompt",            ""),
+            "thanks_cooldown_enabled": settings.get("thanks_cooldown_enabled", False),
+            "thanks_cooldown_secs":    int(settings.get("thanks_cooldown_secs", 30)),
             "ignore_list_enabled": settings.get("ignore_list_enabled", False),
             "ignore_list":         [str(u).lower().strip() for u in settings.get("ignore_list", []) if u],
             "system_prompt":    "",
@@ -1003,6 +1007,8 @@ class WebApp:
         }
         self._config_lock = threading.Lock()
         self._ai_counter  = 0
+        self._last_thanks_time: float = 0.0
+        self._thanks_lock = threading.Lock()
 
         # Load last-used prompt content from file
         last = self._config["last_prompt"]
@@ -1219,6 +1225,8 @@ class WebApp:
             "thanks_tts":               c.get("thanks_tts",               True),
             "thanks_use_shared_prompt": c.get("thanks_use_shared_prompt", False),
             "thanks_prompt":            c.get("thanks_prompt",            ""),
+            "thanks_cooldown_enabled": c.get("thanks_cooldown_enabled", False),
+            "thanks_cooldown_secs":    c.get("thanks_cooldown_secs",    30),
             # ── ignore list ────────────────────────────────────────────────────
             "ignore_list_enabled": c.get("ignore_list_enabled", False),
             "ignore_list":         c.get("ignore_list",         []),
@@ -1416,6 +1424,7 @@ class WebApp:
             "thanks_enabled", "thanks_sub", "thanks_resub", "thanks_gift",
             "thanks_mystery", "thanks_bits", "thanks_raid", "thanks_chat", "thanks_tts",
             "thanks_use_shared_prompt", "thanks_prompt",
+            "thanks_cooldown_enabled", "thanks_cooldown_secs",
             "ignore_list_enabled", "ignore_list",
         )
 
@@ -1428,13 +1437,14 @@ class WebApp:
         @app.route("/api/settings", methods=["POST"])
         def api_settings_post():
             data = _flask.request.get_json(force=True, silent=True) or {}
-            _INT_KEYS = {"every_n", "min_bits"}
+            _INT_KEYS = {"every_n", "min_bits", "thanks_cooldown_secs"}
             _BOOL_KEYS = {
                 "trigger_every_n", "trigger_mentions", "trigger_bits",
                 "trigger_points", "tts_ai", "discord_use_shared_prompt",
                 "thanks_enabled", "thanks_sub", "thanks_resub", "thanks_gift",
                 "thanks_mystery", "thanks_bits", "thanks_raid", "thanks_chat", "thanks_tts",
                 "thanks_use_shared_prompt",
+                "thanks_cooldown_enabled",
                 "ignore_list_enabled",
             }
             with self._config_lock:
@@ -1843,9 +1853,19 @@ class WebApp:
             use_shared   = self._config.get("thanks_use_shared_prompt", False)
             prompt       = None if use_shared else (self._config.get("thanks_prompt", "") or _DEFAULT_THANKS_PROMPT)
             channel      = self._config.get("twitch_channel", "").lower().strip()
+            cooldown_enabled = self._config.get("thanks_cooldown_enabled", False)
+            cooldown_secs    = self._config.get("thanks_cooldown_secs",    30)
 
         if not event_map.get(event_type, False):
             return
+
+        if cooldown_enabled:
+            now = time.time()
+            with self._thanks_lock:
+                if now - self._last_thanks_time < cooldown_secs:
+                    self._log(f"[Thanks] Cooldown active — skipping {event_type} from {username}")
+                    return
+                self._last_thanks_time = now
 
         ai = self._ai
         if not ai:

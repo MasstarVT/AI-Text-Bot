@@ -369,6 +369,20 @@ textarea{resize:vertical;font-family:var(--mono)}
         <label class="row-check"><input type="checkbox" id="s-thanks-tts"> Speak via TTS</label>
 
         <div class="divider"></div>
+        <div class="section-lbl">Cooldown</div>
+        <label class="row-check">
+          <input type="checkbox" id="s-thanks-cooldown-enabled" onchange="toggleThanksCooldown()">
+          Enable response cooldown
+        </label>
+        <div id="s-thanks-cooldown-wrap" style="display:none">
+          <div class="field-row" style="margin-top:6px">
+            <label>Seconds between responses</label>
+            <input type="number" id="s-thanks-cooldown-secs" min="1" max="3600" style="width:80px">
+          </div>
+          <div class="hint">After a thank-you fires, ignore events for this many seconds.</div>
+        </div>
+
+        <div class="divider"></div>
         <div class="section-lbl">Thank-you prompt</div>
         <label class="row-check">
           <input type="checkbox" id="s-thanks-shared" onchange="toggleThanksPrompt()">
@@ -838,6 +852,9 @@ function openSettings() {
     el('s-thanks-shared').checked   = !!s.thanks_use_shared_prompt;
     el('s-thanks-prompt').value     = s.thanks_prompt || '';
     toggleThanksPrompt();
+    el('s-thanks-cooldown-enabled').checked = !!s.thanks_cooldown_enabled;
+    el('s-thanks-cooldown-secs').value      = s.thanks_cooldown_secs ?? 30;
+    toggleThanksCooldown();
     el('s-ignore-enabled').checked = !!s.ignore_list_enabled;
     el('s-ignore-list').value      = (s.ignore_list || []).join('\n');
     // provider
@@ -897,6 +914,8 @@ function saveSettings() {
     thanks_tts:                el('s-thanks-tts').checked,
     thanks_use_shared_prompt:  el('s-thanks-shared').checked,
     thanks_prompt:             el('s-thanks-prompt').value,
+    thanks_cooldown_enabled: el('s-thanks-cooldown-enabled').checked,
+    thanks_cooldown_secs:    parseInt(el('s-thanks-cooldown-secs').value) || 30,
     ignore_list_enabled: el('s-ignore-enabled').checked,
     ignore_list:         el('s-ignore-list').value.split('\n').map(u => u.trim().toLowerCase()).filter(Boolean),
   };
@@ -964,6 +983,11 @@ function toggleDiscordPrompt() {
 function toggleThanksPrompt() {
   el('s-thanks-prompt-wrap').style.display =
     el('s-thanks-shared').checked ? 'none' : '';
+}
+
+function toggleThanksCooldown() {
+  el('s-thanks-cooldown-wrap').style.display =
+    el('s-thanks-cooldown-enabled').checked ? '' : 'none';
 }
 
 // ── file browser ──────────────────────────────────────────────────────────
