@@ -921,9 +921,10 @@ class WebApp:
         "thanks_mystery": True,
         "thanks_bits":    False,
         "thanks_raid":    True,
-        "thanks_chat":    True,
-        "thanks_tts":     True,
-        "thanks_prompt":  "",
+        "thanks_chat":              True,
+        "thanks_tts":               True,
+        "thanks_use_shared_prompt": False,
+        "thanks_prompt":            "",
     }
 
     def __init__(self) -> None:
@@ -986,9 +987,10 @@ class WebApp:
             "thanks_mystery":   settings.get("thanks_mystery",   True),
             "thanks_bits":      settings.get("thanks_bits",      False),
             "thanks_raid":      settings.get("thanks_raid",      True),
-            "thanks_chat":      settings.get("thanks_chat",      True),
-            "thanks_tts":       settings.get("thanks_tts",       True),
-            "thanks_prompt":    settings.get("thanks_prompt",    ""),
+            "thanks_chat":              settings.get("thanks_chat",              True),
+            "thanks_tts":               settings.get("thanks_tts",               True),
+            "thanks_use_shared_prompt": settings.get("thanks_use_shared_prompt", False),
+            "thanks_prompt":            settings.get("thanks_prompt",            ""),
             "system_prompt":    "",
             # ── connection status ───────────────────────────────────────────
             "twitch_status":    "off",   # off / connecting / online
@@ -1208,9 +1210,10 @@ class WebApp:
             "thanks_mystery":   c.get("thanks_mystery",   True),
             "thanks_bits":      c.get("thanks_bits",      False),
             "thanks_raid":      c.get("thanks_raid",      True),
-            "thanks_chat":      c.get("thanks_chat",      True),
-            "thanks_tts":       c.get("thanks_tts",       True),
-            "thanks_prompt":    c.get("thanks_prompt",    ""),
+            "thanks_chat":              c.get("thanks_chat",              True),
+            "thanks_tts":               c.get("thanks_tts",               True),
+            "thanks_use_shared_prompt": c.get("thanks_use_shared_prompt", False),
+            "thanks_prompt":            c.get("thanks_prompt",            ""),
         }
         with open(self._settings_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -1404,7 +1407,7 @@ class WebApp:
             # ── thank-you responses ──────────────────────────────────────────
             "thanks_enabled", "thanks_sub", "thanks_resub", "thanks_gift",
             "thanks_mystery", "thanks_bits", "thanks_raid", "thanks_chat", "thanks_tts",
-            "thanks_prompt",
+            "thanks_use_shared_prompt", "thanks_prompt",
         )
 
         @app.route("/api/settings", methods=["GET"])
@@ -1422,6 +1425,7 @@ class WebApp:
                 "trigger_points", "tts_ai", "discord_use_shared_prompt",
                 "thanks_enabled", "thanks_sub", "thanks_resub", "thanks_gift",
                 "thanks_mystery", "thanks_bits", "thanks_raid", "thanks_chat", "thanks_tts",
+                "thanks_use_shared_prompt",
             }
             with self._config_lock:
                 for k in _SETTINGS_KEYS:
@@ -1810,10 +1814,11 @@ class WebApp:
                 "bits":        self._config.get("thanks_bits",    False),
                 "raid":        self._config.get("thanks_raid",    True),
             }
-            chat_on = self._config.get("thanks_chat",    True)
-            tts_on  = self._config.get("thanks_tts",     True)
-            prompt  = self._config.get("thanks_prompt",  "") or _DEFAULT_THANKS_PROMPT
-            channel = self._config.get("twitch_channel", "").lower().strip()
+            chat_on      = self._config.get("thanks_chat",              True)
+            tts_on       = self._config.get("thanks_tts",               True)
+            use_shared   = self._config.get("thanks_use_shared_prompt", False)
+            prompt       = None if use_shared else (self._config.get("thanks_prompt", "") or _DEFAULT_THANKS_PROMPT)
+            channel      = self._config.get("twitch_channel", "").lower().strip()
 
         if not event_map.get(event_type, False):
             return
