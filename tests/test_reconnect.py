@@ -2,7 +2,7 @@
 import threading
 import time
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 
 class TestTwitchReconnectBackoff(unittest.TestCase):
@@ -22,10 +22,6 @@ class TestTwitchReconnectBackoff(unittest.TestCase):
 
     def test_on_reconnecting_called_on_drop(self):
         """on_reconnecting callback is called when the session drops unexpectedly."""
-        import sys, os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-        import twitch_bot
-
         reconnect_calls = []
         done = threading.Event()
 

@@ -62,7 +62,6 @@ except Exception:
 
 TWITCH_HOST     = "irc.chat.twitch.tv"
 TWITCH_PORT     = 6667
-RECONNECT_DELAY = 5      # seconds between auto-reconnect attempts
 
 # ── AI provider definitions ───────────────────────────────────────────────────
 _PROVIDERS: dict[str, dict] = {
