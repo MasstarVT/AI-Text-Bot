@@ -559,6 +559,7 @@ class TwitchIRCClient:
         self.on_message      = on_message      # callback(username: str, message: str)
         self.on_ready        = on_ready        # called once when JOIN is confirmed
         self.on_reconnecting = on_reconnecting # called on unexpected disconnect (before backoff sleep)
+        self.on_event: callable | None = None   # callback(event_type: str, username: str, extra: dict)
         self._sock: socket.socket | None = None
         self._running = False
         self._ready_fired = False
@@ -672,6 +673,32 @@ class TwitchIRCClient:
             bits      = int(tags.get("bits", 0) or 0)
             reward_id = tags.get("custom-reward-id", "")
             self.on_message(m.group(1), m.group(2).strip(), bits, reward_id)
+
+        if " USERNOTICE #" in line:
+            msg_id   = tags.get("msg-id", "")
+            username = tags.get("display-name") or tags.get("login", "")
+            event_type: str | None = None
+            extra: dict = {}
+            if msg_id == "sub":
+                event_type = "sub"
+                extra["plan"] = tags.get("msg-param-sub-plan", "")
+            elif msg_id == "resub":
+                event_type = "resub"
+                extra["months"] = tags.get("msg-param-cumulative-months", "1")
+                extra["streak"] = tags.get("msg-param-streak-months", "0")
+                extra["plan"]   = tags.get("msg-param-sub-plan", "")
+            elif msg_id == "subgift":
+                event_type = "subgift"
+                extra["recipient"] = tags.get("msg-param-recipient-display-name", "a viewer")
+                extra["plan"]      = tags.get("msg-param-sub-plan", "")
+            elif msg_id == "submysterygift":
+                event_type = "mysterygift"
+                extra["count"] = tags.get("msg-param-mass-gift-count", "1")
+            elif msg_id == "raid":
+                event_type = "raid"
+                extra["viewers"] = tags.get("msg-param-viewerCount", "0")
+            if event_type and username and self.on_event:
+                self.on_event(event_type, username, extra)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
