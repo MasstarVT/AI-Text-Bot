@@ -933,6 +933,8 @@ class WebApp:
         # ── chat commands ──────────────────────────────────────────────────────
         "chat_commands_enabled": False,
         "chat_commands":         {},
+        # ── scheduled messages ─────────────────────────────────────────────────
+        "scheduled_msgs": [],
     }
 
     def __init__(self) -> None:
@@ -1005,6 +1007,7 @@ class WebApp:
             "ignore_list":         [str(u).lower().strip() for u in settings.get("ignore_list", []) if u],
             "chat_commands_enabled": settings.get("chat_commands_enabled", False),
             "chat_commands":         dict(settings.get("chat_commands", {})),
+            "scheduled_msgs": list(settings.get("scheduled_msgs", [])),
             "system_prompt":    "",
             # ── connection status ───────────────────────────────────────────
             "twitch_status":    "off",   # off / connecting / online
@@ -1049,6 +1052,9 @@ class WebApp:
         self._log_platform_info()
         self._autosave()
 
+        _sched = threading.Thread(target=self._scheduler_loop, name="Scheduler", daemon=True)
+        _sched.start()
+
         # Auto-connect if credentials already saved
         if all(self._config.get(k) for k in
                ("twitch_channel", "twitch_username", "twitch_token")):
@@ -1067,6 +1073,29 @@ class WebApp:
         self._log(f"[System] Libraries: {', '.join(libs)}")
         if not HAS_PYDIRECTINPUT and not HAS_PYNPUT:
             self._log("[System] WARNING: No input library found — Twitch Plays disabled.")
+
+    def _scheduler_loop(self) -> None:
+        last_fired: dict[str, float] = {}  # keyed by message text
+        while True:
+            time.sleep(30)
+            with self._config_lock:
+                msgs    = list(self._config.get("scheduled_msgs", []))
+                online  = self._config.get("twitch_status") == "online"
+                channel = self._config.get("twitch_channel", "").lower().strip()
+            if not online or not channel or not msgs:
+                continue
+            now = time.time()
+            for entry in msgs:
+                text     = entry.get("text", "").strip()
+                interval = max(1, int(entry.get("interval", 30))) * 60
+                if not text:
+                    continue
+                if now - last_fired.get(text, 0) >= interval:
+                    last_fired[text] = now
+                    irc = self._irc
+                    if irc:
+                        irc.say(channel, text[:500])
+                        self._log(f"[Scheduled] → {text}")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Thread-safe logging + SSE broadcast
@@ -1237,6 +1266,7 @@ class WebApp:
             "ignore_list":         c.get("ignore_list",         []),
             "chat_commands_enabled": c.get("chat_commands_enabled", False),
             "chat_commands":         c.get("chat_commands",         {}),
+            "scheduled_msgs": c.get("scheduled_msgs", []),
         }
         with open(self._settings_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -1434,6 +1464,7 @@ class WebApp:
             "thanks_cooldown_enabled", "thanks_cooldown_secs",
             "ignore_list_enabled", "ignore_list",
             "chat_commands_enabled", "chat_commands",
+            "scheduled_msgs",
         )
 
         @app.route("/api/settings", methods=["GET"])
@@ -1474,6 +1505,17 @@ class WebApp:
                                         cmd = "!" + cmd
                                     cmds[cmd] = resp
                                 self._config[k] = cmds
+                        elif k == "scheduled_msgs":
+                            if isinstance(data[k], list):
+                                msgs = []
+                                for e in data[k]:
+                                    if not isinstance(e, dict):
+                                        continue
+                                    text     = str(e.get("text", "")).strip()
+                                    interval = max(1, int(e.get("interval", 30)))
+                                    if text:
+                                        msgs.append({"text": text, "interval": interval})
+                                self._config[k] = msgs
                         elif k in _INT_KEYS:
                             try:
                                 v = int(data[k])

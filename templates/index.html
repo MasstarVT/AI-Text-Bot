@@ -250,6 +250,7 @@ textarea{resize:vertical;font-family:var(--mono)}
       <button class="tab"        onclick="showTab('thanks')">Thanks</button>
       <button class="tab"        onclick="showTab('ignore')">Ignore</button>
       <button class="tab"        onclick="showTab('commands')">Commands</button>
+      <button class="tab"        onclick="showTab('schedule')">Schedule</button>
     </div>
     <div class="modal-body">
 
@@ -428,6 +429,24 @@ textarea{resize:vertical;font-family:var(--mono)}
           <tbody id="cmd-rows"></tbody>
         </table>
         <button class="btn btn-neutral btn-sm" onclick="addCmdRow()">+ Add command</button>
+      </div>
+
+      <!-- Schedule tab -->
+      <div id="tab-schedule" class="tab-pane">
+        <div class="section-lbl">Scheduled Messages</div>
+        <div class="hint">Messages posted to chat automatically on a repeating interval while connected. Checked every 30 seconds.</div>
+        <div class="divider"></div>
+        <table id="sched-table" style="width:100%;border-collapse:collapse;margin-bottom:8px">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Message</th>
+              <th style="padding:4px 6px;font-size:11px;color:var(--muted);white-space:nowrap">Interval (min)</th>
+              <th style="width:32px"></th>
+            </tr>
+          </thead>
+          <tbody id="sched-rows"></tbody>
+        </table>
+        <button class="btn btn-neutral btn-sm" onclick="addSchedRow()">+ Add message</button>
       </div>
 
     </div><!-- /modal-body -->
@@ -883,6 +902,8 @@ function openSettings() {
     el('s-cmd-enabled').checked = !!s.chat_commands_enabled;
     el('cmd-rows').innerHTML = '';
     Object.entries(s.chat_commands || {}).forEach(([cmd, resp]) => addCmdRow(cmd, resp));
+    el('sched-rows').innerHTML = '';
+    (s.scheduled_msgs || []).forEach(e => addSchedRow(e.text, e.interval));
     // provider
     if (s.llm_provider) {
       el('s-provider').value = s.llm_provider;
@@ -946,6 +967,7 @@ function saveSettings() {
     ignore_list:         el('s-ignore-list').value.split('\n').map(u => u.trim().toLowerCase()).filter(Boolean),
     chat_commands_enabled: el('s-cmd-enabled').checked,
     chat_commands:         getChatCommands(),
+    scheduled_msgs: getSchedMsgs(),
   };
   api('/api/settings','POST', body).then(() => closeSettings());
 }
@@ -1027,6 +1049,24 @@ function getChatCommands() {
     if (cmd && resp) cmds[cmd] = resp;
   });
   return cmds;
+}
+
+function addSchedRow(text, interval) {
+  const tbody = el('sched-rows');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td style="padding:2px 4px"><input type="text" placeholder="Follow me on Twitter!" style="width:100%" value="${escHtml(text||'')}"></td>
+    <td style="padding:2px 4px;text-align:center"><input type="number" min="1" max="9999" style="width:70px" value="${interval||30}"></td>
+    <td style="padding:2px 4px;text-align:center"><button class="btn-icon" onclick="this.closest('tr').remove()">✕</button></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+function getSchedMsgs() {
+  return Array.from(el('sched-rows').querySelectorAll('tr')).map(tr => {
+    const inputs = tr.querySelectorAll('input');
+    return { text: inputs[0].value.trim(), interval: parseInt(inputs[1].value) || 30 };
+  }).filter(e => e.text);
 }
 
 function toggleDiscordPrompt() {
