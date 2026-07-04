@@ -67,6 +67,48 @@ Delivery is independently toggled: `thanks_chat` (post to IRC via `irc.say(chann
 
 **Note:** If both `trigger_bits` and `thanks_bits` are enabled simultaneously, a bits cheer fires two separate AI calls (one from `_route_ai`, one from `_handle_event`) with different system prompts.
 
+**Thanks cooldown (`thanks_cooldown_enabled` / `thanks_cooldown_secs`):** An optional cooldown prevents the thanks system from firing more than once within a configurable window (default 30 s). `_last_thanks_time` and `_thanks_lock` protect the timestamp; the cooldown is checked inside `_handle_event` after the per-event toggle check and before the AI call.
+
+**Shared prompt (`thanks_use_shared_prompt`):** When enabled, `_handle_event` passes `prompt_override=None` to `ai.handle()`, causing it to fall back to the main system prompt instead of the dedicated thank-you prompt.
+
+## Username ignore list (`_dispatch`)
+
+When `ignore_list_enabled` is `True`, `_dispatch` returns early for any username in `ignore_list` — no AI, no plays, no commands, no thanks, no chat history. The check runs after the log line and before all routing. `_handle_event` performs the same check independently (under `_config_lock`) so USERNOTICE events (subs, raids, gifts) from ignored users are also suppressed.
+
+Config keys: `ignore_list_enabled` (bool), `ignore_list` (list of lowercase strings).
+
+## Custom `!command` responses (`_route_chat_commands`)
+
+When `chat_commands_enabled` is `True` and a message starts with a registered `!word`, `_route_chat_commands` posts the configured static reply to Twitch chat without invoking the AI. Called from `_dispatch` after the ignore check and before `_route_plays`. Commands are stored as `dict[str, str]` in `chat_commands` (keys normalised to lowercase, auto-prefixed with `!`). Responses are truncated to 500 chars before sending.
+
+**Note:** If an AI trigger (e.g. every-N counter) fires on the same message as a command match, both responses go to chat. This is by design — the two systems are independent.
+
+## Scheduled messages (`_scheduler_loop`)
+
+A daemon thread (`Scheduler`) fires messages to Twitch chat on repeating intervals while connected. Checks every 30 seconds. Only fires when `twitch_status == "online"` and a channel is configured.
+
+Each entry is `{"text": str, "interval": int}` (interval in minutes). Stored in `scheduled_msgs` config key.
+
+Implementation details:
+- `last_fired` is keyed by `(text, interval)` tuple — two entries with identical text but different intervals are tracked independently.
+- The loop body is wrapped in `try/except Exception` so any error logs `[Scheduler] Error: ...` and the thread continues rather than dying silently.
+- Stale keys are pruned each iteration using an `active_keys` set built during the loop.
+
+## Chat context window (`_chat_history`)
+
+When `ai_context_enabled` is `True`, the last N chat messages are prepended to the AI's user-turn as a `[Recent chat]` block. `N` is controlled by `ai_context_size` (default 5, max stored 20).
+
+- `_chat_history: collections.deque[tuple[str, str]]` (maxlen=20) and `_history_lock` live on `WebApp`.
+- `_dispatch` appends `(username, message)` after the ignore check (ignored users never enter history).
+- `_route_ai` snapshots the deque under `_history_lock`, strips the current trigger message from the tail (to avoid sending it twice), slices to `context_size`, and passes `context` to `ai.handle()`.
+- `AIResponseHandler._query` builds `user_content`:
+  - With context: `f"[Recent chat]\n{ctx_lines}\n\n{username}: {message}"`
+  - Without: `f"{username}: {message}"`
+- `_stream_openai` and `_stream_anthropic` now take `user_content: str` instead of `username, message` separately.
+- Thanks and Discord reply paths call `ai.handle()` without `context` (defaults to `None`) — Twitch chat history is never injected into those responses.
+
+Lock ordering: `_config_lock` is always released before `_history_lock` is acquired — no deadlock risk.
+
 ## TTS panic / stop behaviour
 
 `TTSEngine` has two shutdown paths:
