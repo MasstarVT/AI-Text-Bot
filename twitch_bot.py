@@ -88,7 +88,17 @@ _DEFAULT_THANKS_PROMPT = (
     "cheers bits, or raids, respond with a warm, brief, personalized thank-you message "
     "that fits naturally in Twitch chat. Keep it under two sentences. Do not use hashtags."
 )
-
+_THANKS_TEMPLATES: dict[str, object] = {
+    "sub":         lambda u, e: f"[EVENT] {u} just subscribed! Thank them warmly.",
+    "resub":       lambda u, e: (
+        f"[EVENT] {u} resubscribed for {e.get('months','?')} months "
+        f"({e.get('streak','0')} month streak)! Thank them."
+    ),
+    "subgift":     lambda u, e: f"[EVENT] {u} gifted a sub to {e.get('recipient','a viewer')}! Thank {u}.",
+    "mysterygift": lambda u, e: f"[EVENT] {u} gifted {e.get('count','?')} subs to the community! Thank them.",
+    "raid":        lambda u, e: f"[EVENT] {u} raided with {e.get('viewers','?')} viewers! Welcome them and their community.",
+    "bits":        lambda u, e: f"[EVENT] {u} cheered {e.get('bits','?')} bits! Thank them.",
+}
 
 def _scan_voices_dir(voices_dir: str) -> list[str]:
     """Return sorted .onnx voice names (without extension) from voices_dir."""
@@ -1390,6 +1400,10 @@ class WebApp:
             "discord_use_shared_prompt", "discord_prompt",
             "trigger_every_n", "every_n", "trigger_mentions", "trigger_bits",
             "min_bits", "trigger_points", "reward_id", "tts_ai",
+            # ── thank-you responses ──────────────────────────────────────────
+            "thanks_enabled", "thanks_sub", "thanks_resub", "thanks_gift",
+            "thanks_mystery", "thanks_bits", "thanks_raid", "thanks_chat", "thanks_tts",
+            "thanks_prompt",
         )
 
         @app.route("/api/settings", methods=["GET"])
@@ -1405,6 +1419,8 @@ class WebApp:
             _BOOL_KEYS = {
                 "trigger_every_n", "trigger_mentions", "trigger_bits",
                 "trigger_points", "tts_ai", "discord_use_shared_prompt",
+                "thanks_enabled", "thanks_sub", "thanks_resub", "thanks_gift",
+                "thanks_mystery", "thanks_bits", "thanks_raid", "thanks_chat", "thanks_tts",
             }
             with self._config_lock:
                 for k in _SETTINGS_KEYS:
@@ -1804,20 +1820,9 @@ class WebApp:
         if not ai:
             return
 
-        _templates = {
-            "sub":         lambda u, e: f"[EVENT] {u} just subscribed! Thank them warmly.",
-            "resub":       lambda u, e: (
-                f"[EVENT] {u} resubscribed for {e.get('months','?')} months "
-                f"({e.get('streak','0')} month streak)! Thank them."
-            ),
-            "subgift":     lambda u, e: f"[EVENT] {u} gifted a sub to {e.get('recipient','a viewer')}! Thank {u}.",
-            "mysterygift": lambda u, e: f"[EVENT] {u} gifted {e.get('count','?')} subs to the community! Thank them.",
-            "raid":        lambda u, e: f"[EVENT] {u} raided with {e.get('viewers','?')} viewers! Welcome them and their community.",
-            "bits":        lambda u, e: f"[EVENT] {u} cheered {e.get('bits','?')} bits! Thank them.",
-        }
-        if event_type not in _templates:
+        if event_type not in _THANKS_TEMPLATES:
             return
-        msg = _templates[event_type](username, extra)
+        msg = _THANKS_TEMPLATES[event_type](username, extra)
         self._log(f"[Thanks] {event_type} from {username}")
 
         def reply_cb(reply: str) -> None:
