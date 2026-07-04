@@ -40,6 +40,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
 
 import flask as _flask
@@ -88,7 +89,7 @@ _DEFAULT_THANKS_PROMPT = (
     "cheers bits, or raids, respond with a warm, brief, personalized thank-you message "
     "that fits naturally in Twitch chat. Keep it under two sentences. Do not use hashtags."
 )
-_THANKS_TEMPLATES: dict[str, object] = {
+_THANKS_TEMPLATES: dict[str, Callable[[str, dict], str]] = {
     "sub":         lambda u, e: f"[EVENT] {u} just subscribed! Thank them warmly.",
     "resub":       lambda u, e: (
         f"[EVENT] {u} resubscribed for {e.get('months','?')} months "
@@ -569,13 +570,13 @@ class TwitchIRCClient:
     Parses PRIVMSG lines and calls on_message(username, text) for each chat message.
     """
 
-    def __init__(self, get_creds, log, on_message, on_ready=None, on_reconnecting=None) -> None:
+    def __init__(self, get_creds, log, on_message, on_ready=None, on_reconnecting=None, on_event=None) -> None:
         self.get_creds       = get_creds       # callable → dict(channel, username, token)
         self.log             = log
         self.on_message      = on_message      # callback(username: str, message: str)
         self.on_ready        = on_ready        # called once when JOIN is confirmed
         self.on_reconnecting = on_reconnecting # called on unexpected disconnect (before backoff sleep)
-        self.on_event: callable | None = None   # callback(event_type: str, username: str, extra: dict)
+        self.on_event: callable | None = on_event  # callback(event_type: str, username: str, extra: dict)
         self._sock: socket.socket | None = None
         self._running = False
         self._ready_fired = False
@@ -1650,8 +1651,8 @@ class WebApp:
             on_message=self._dispatch,
             on_ready=self._on_irc_ready,
             on_reconnecting=self._on_irc_reconnecting,
+            on_event=self._handle_event,
         )
-        self._irc.on_event = self._handle_event
         self._irc.connect()
         self._log("[System] Connecting to Twitch IRC…")
 
@@ -1799,7 +1800,8 @@ class WebApp:
 
     def _handle_event(self, event_type: str, username: str, extra: dict) -> None:
         with self._config_lock:
-            enabled   = self._config.get("thanks_enabled", False)
+            if not self._config.get("thanks_enabled", False):
+                return
             event_map = {
                 "sub":         self._config.get("thanks_sub",     True),
                 "resub":       self._config.get("thanks_resub",   True),
@@ -1813,15 +1815,13 @@ class WebApp:
             prompt  = self._config.get("thanks_prompt",  "") or _DEFAULT_THANKS_PROMPT
             channel = self._config.get("twitch_channel", "").lower().strip()
 
-        if not enabled or not event_map.get(event_type, False):
+        if not event_map.get(event_type, False):
             return
 
         ai = self._ai
         if not ai:
             return
 
-        if event_type not in _THANKS_TEMPLATES:  # guard for future event types not yet in templates
-            return
         msg = _THANKS_TEMPLATES[event_type](username, extra)
         self._log(f"[Thanks] {event_type} from {username}")
 
