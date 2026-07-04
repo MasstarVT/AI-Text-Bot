@@ -1075,27 +1075,34 @@ class WebApp:
             self._log("[System] WARNING: No input library found — Twitch Plays disabled.")
 
     def _scheduler_loop(self) -> None:
-        last_fired: dict[str, float] = {}  # keyed by message text
+        last_fired: dict[tuple[str, int], float] = {}
         while True:
             time.sleep(30)
-            with self._config_lock:
-                msgs    = list(self._config.get("scheduled_msgs", []))
-                online  = self._config.get("twitch_status") == "online"
-                channel = self._config.get("twitch_channel", "").lower().strip()
-            if not online or not channel or not msgs:
-                continue
-            now = time.time()
-            for entry in msgs:
-                text     = entry.get("text", "").strip()
-                interval = max(1, int(entry.get("interval", 30))) * 60
-                if not text:
+            try:
+                with self._config_lock:
+                    msgs    = list(self._config.get("scheduled_msgs", []))
+                    online  = self._config.get("twitch_status") == "online"
+                    channel = self._config.get("twitch_channel", "").lower().strip()
+                if not online or not channel or not msgs:
                     continue
-                if now - last_fired.get(text, 0) >= interval:
-                    last_fired[text] = now
-                    irc = self._irc
-                    if irc:
-                        irc.say(channel, text[:500])
-                        self._log(f"[Scheduled] → {text}")
+                now = time.time()
+                active_keys: set[tuple[str, int]] = set()
+                for entry in msgs:
+                    text     = entry.get("text", "").strip()
+                    interval = max(1, int(entry.get("interval", 30))) * 60
+                    if not text:
+                        continue
+                    key = (text, interval)
+                    active_keys.add(key)
+                    if now - last_fired.get(key, 0) >= interval:
+                        last_fired[key] = now
+                        irc = self._irc
+                        if irc:
+                            irc.say(channel, text[:500])
+                            self._log(f"[Scheduled] → {text}")
+                last_fired = {k: v for k, v in last_fired.items() if k in active_keys}
+            except Exception as exc:
+                self._log(f"[Scheduler] Error: {exc}")
 
     # ══════════════════════════════════════════════════════════════════════════
     # Thread-safe logging + SSE broadcast
