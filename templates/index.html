@@ -21,6 +21,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14
 .pill{font-size:12px;padding:2px 10px;border-radius:12px;white-space:nowrap}
 .pill.off{color:var(--off)}.pill.connecting{color:var(--orange)}.pill.online{color:var(--on)}.pill.error{color:var(--off)}
 
+#tts-volume{accent-color:var(--accent)}
+#tts-queue-badge{font-size:11px;opacity:.8}
+
 /* ── buttons ── */
 .btn{border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;transition:opacity .15s}
 .btn:disabled{opacity:.4;cursor:default}
@@ -128,7 +131,11 @@ textarea{resize:vertical;font-family:var(--mono)}
 <!-- ════════════════════════════════ HEADER ════════════════════════════════ -->
 <header id="header">
   <h1>Twitch Interactive Bot</h1>
-  <button class="btn btn-panic" onclick="api('/api/tts/panic','POST')">⏹ Panic</button>
+  <button id="btn-panic" class="btn btn-panic" onclick="api('/api/tts/panic','POST').then(_ttsPanic)">⏹ Panic <span id="tts-queue-badge" style="display:none">(0)</span></button>
+  <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted)">
+    🔊<input id="tts-volume" type="range" min="0" max="1" step="0.05" value="1"
+       style="width:70px;cursor:pointer" oninput="onVolumeChange(this.value)">
+  </label>
   <button id="btn-connect"    class="btn btn-green"   onclick="connectTwitch()">Connect</button>
   <button id="btn-disconnect" class="btn btn-red"     onclick="api('/api/disconnect','POST').then(loadState)" disabled>Disconnect</button>
   <span   id="twitch-status"  class="pill off">Twitch: ● Off</span>
@@ -395,36 +402,68 @@ function toggleVis(input) {
 // ── TTS browser audio ─────────────────────────────────────────────────────
 const _ttsQueue = [];
 let _ttsActive = null;
+let _ttsQueueCount = 0;
+
+function _ttsUpdateBadge() {
+  const badge = el('tts-queue-badge');
+  if (!badge) return;
+  if (_ttsQueueCount > 0) {
+    badge.textContent = '(' + _ttsQueueCount + ')';
+    badge.style.display = 'inline';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function _ttsVolume() {
+  const v = el('tts-volume');
+  return v ? parseFloat(v.value) : 1;
+}
+
+function onVolumeChange(val) {
+  localStorage.setItem('tts_volume', val);
+  if (_ttsActive) _ttsActive.volume = parseFloat(val);
+}
 
 function _ttsEnqueue(wav_b64) {
   _ttsQueue.push(wav_b64);
+  _ttsQueueCount++;
+  _ttsUpdateBadge();
   if (!_ttsActive) _ttsPlayNext();
 }
 
 function _ttsPlayNext() {
   if (!_ttsQueue.length) { _ttsActive = null; return; }
   const b64 = _ttsQueue.shift();
+  _ttsQueueCount = Math.max(0, _ttsQueueCount - 1);
+  _ttsUpdateBadge();
   const audio = new Audio('data:audio/wav;base64,' + b64);
+  audio.volume = _ttsVolume();
   _ttsActive = audio;
-  audio.onended = _ttsPlayNext;
+  audio.onended = () => { if (_ttsActive === audio) _ttsPlayNext(); };
   audio.onerror = () => { if (_ttsActive === audio) { _ttsActive = null; _ttsPlayNext(); } };
-  audio.play().catch(() => { if (_ttsActive === audio) _ttsPlayNext(); });
+  audio.play().catch(err => { console.warn('[TTS] play() rejected:', err); if (_ttsActive === audio) _ttsPlayNext(); });
 }
 
 function _ttsPanic() {
   _ttsQueue.length = 0;
+  _ttsQueueCount = 0;
+  _ttsUpdateBadge();
   if (_ttsActive) { _ttsActive.pause(); _ttsActive = null; }
 }
 
 // ── SSE stream ────────────────────────────────────────────────────────────
 function startSSE() {
+  _ttsPanic();
   const es = new EventSource('/stream');
   es.onmessage = e => log(e.data);
   es.addEventListener('status', e => {
     const s = JSON.parse(e.data);
     applyStatus(s.twitch_status, s.discord_status);
   });
-  es.addEventListener('tts',       e => _ttsEnqueue(JSON.parse(e.data).wav));
+  es.addEventListener('tts', e => {
+    try { _ttsEnqueue(JSON.parse(e.data).wav); } catch (err) { console.error('[TTS] bad tts event:', err); }
+  });
   es.addEventListener('tts-panic', () => _ttsPanic());
   es.onerror = () => { es.close(); setTimeout(startSSE, 3000); };
 }
@@ -889,6 +928,8 @@ window.applyStatus = function(twitch, discord) {
 
 // ── init ──────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
+  const saved = localStorage.getItem('tts_volume');
+  if (saved !== null) { const v = el('tts-volume'); if (v) v.value = saved; }
   loadState().then(() => startSSE());
 });
 </script>
