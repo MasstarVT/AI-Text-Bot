@@ -1,4 +1,5 @@
 """Unit tests for Discord integration — AIResponseHandler reply_cb and prompt_override."""
+import json
 import queue
 import threading
 import unittest
@@ -32,11 +33,14 @@ class TestAIHandlerReplyCallback(unittest.TestCase):
             tts=FakeTTS(),
         )
 
-        # Patch out the HTTP call
+        # Patch out the HTTP call with a streaming mock
         mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "choices": [{"message": {"content": fake_reply}, "finish_reason": "stop"}]
-        }
+        chunk = json.dumps({"choices": [{"delta": {"content": fake_reply}, "finish_reason": None}]})
+        mock_resp.iter_lines.return_value = iter([
+            b"data: " + chunk.encode(),
+            b"data: [DONE]",
+        ])
+        mock_resp.raise_for_status = MagicMock()
         handler._mock_patch = patch("requests.post", return_value=mock_resp)
         handler._mock_patch.start()
         self.addCleanup(handler._mock_patch.stop)
@@ -84,12 +88,15 @@ class TestAIHandlerReplyCallback(unittest.TestCase):
         handler = self._make_handler("OK")
         captured_payload = []
 
-        def fake_post(url, headers=None, json=None, timeout=None):
+        def fake_post(url, headers=None, json=None, timeout=None, stream=None):
             captured_payload.append(json)
             mock_resp = MagicMock()
-            mock_resp.json.return_value = {
-                "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}]
-            }
+            chunk = __import__("json").dumps({"choices": [{"delta": {"content": "OK"}, "finish_reason": None}]})
+            mock_resp.iter_lines.return_value = iter([
+                b"data: " + chunk.encode(),
+                b"data: [DONE]",
+            ])
+            mock_resp.raise_for_status = MagicMock()
             return mock_resp
 
         handler._mock_patch.stop()

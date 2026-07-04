@@ -371,6 +371,113 @@ class AIResponseHandler:
     def stop(self) -> None:
         self._q.put(None)
 
+    @staticmethod
+    def _is_sentence_boundary(text: str) -> bool:
+        """True if text ends at a sentence boundary suitable for TTS dispatch."""
+        stripped = text.rstrip()
+        return len(stripped) >= 8 and stripped[-1] in '.!?'
+
+    def _stream_openai(self, endpoint: str, model: str, api_key: str,
+                       system_prompt: str, username: str, message: str,
+                       tts_cb) -> str:
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": f"{username}: {message}"},
+            ],
+            "stream": True,
+            "max_tokens": 1500,
+        }
+        resp = requests.post(endpoint, headers=headers, json=payload,
+                             timeout=90, stream=True)
+        resp.raise_for_status()
+
+        full_tokens: list[str] = []
+        sentence_buf: list[str] = []
+
+        for raw_line in resp.iter_lines():
+            if not raw_line:
+                continue
+            if isinstance(raw_line, bytes):
+                raw_line = raw_line.decode("utf-8", errors="replace")
+            if not raw_line.startswith("data: "):
+                continue
+            data = raw_line[6:]
+            if data.strip() == "[DONE]":
+                break
+            try:
+                chunk  = json.loads(data)
+                token  = chunk["choices"][0]["delta"].get("content") or ""
+            except (json.JSONDecodeError, KeyError, IndexError):
+                continue
+            if not token:
+                continue
+            full_tokens.append(token)
+            sentence_buf.append(token)
+            buf_str = "".join(sentence_buf)
+            if self._is_sentence_boundary(buf_str) and tts_cb:
+                tts_cb(buf_str.strip())
+                sentence_buf = []
+
+        remainder = "".join(sentence_buf).strip()
+        if remainder and tts_cb:
+            tts_cb(remainder)
+
+        return "".join(full_tokens).strip()
+
+    def _stream_anthropic(self, endpoint: str, model: str, api_key: str,
+                          system_prompt: str, username: str, message: str,
+                          tts_cb) -> str:
+        headers = {
+            "x-api-key":         api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type":      "application/json",
+        }
+        payload = {
+            "model":      model,
+            "max_tokens": 1500,
+            "stream":     True,
+            "system":     system_prompt,
+            "messages":   [{"role": "user", "content": f"{username}: {message}"}],
+        }
+        resp = requests.post(endpoint, headers=headers, json=payload,
+                             timeout=90, stream=True)
+        resp.raise_for_status()
+
+        full_tokens: list[str] = []
+        sentence_buf: list[str] = []
+
+        for raw_line in resp.iter_lines():
+            if not raw_line:
+                continue
+            if isinstance(raw_line, bytes):
+                raw_line = raw_line.decode("utf-8", errors="replace")
+            if not raw_line.startswith("data: "):
+                continue
+            try:
+                event = json.loads(raw_line[6:])
+                if event.get("type") != "content_block_delta":
+                    continue
+                token = event.get("delta", {}).get("text") or ""
+            except (json.JSONDecodeError, KeyError):
+                continue
+            if not token:
+                continue
+            full_tokens.append(token)
+            sentence_buf.append(token)
+            buf_str = "".join(sentence_buf)
+            if self._is_sentence_boundary(buf_str) and tts_cb:
+                tts_cb(buf_str.strip())
+                sentence_buf = []
+
+        remainder = "".join(sentence_buf).strip()
+        if remainder and tts_cb:
+            tts_cb(remainder)
+
+        return "".join(full_tokens).strip()
+
     # ── worker ───────────────────────────────────────────────────────────────
 
     def _worker(self) -> None:
@@ -394,18 +501,18 @@ class AIResponseHandler:
         _use_tts      = use_tts if use_tts is not None else cfg.get("tts_ai", True)
         fmt           = _PROVIDERS.get(provider, {}).get("fmt", "openai")
 
+        tts_cb = self.tts.speak if _use_tts else None
+
         try:
             if fmt == "anthropic":
-                reply = self._query_anthropic(endpoint, model, api_key, system_prompt, username, message)
+                reply = self._stream_anthropic(endpoint, model, api_key, system_prompt, username, message, tts_cb)
             else:
-                reply = self._query_openai(endpoint, model, api_key, system_prompt, username, message)
+                reply = self._stream_openai(endpoint, model, api_key, system_prompt, username, message, tts_cb)
 
             if not reply:
                 self.log("[AI] Model returned an empty response.")
                 return
             self.log(f"[AI] → {reply}")
-            if _use_tts:
-                self.tts.speak(reply)
             if reply_cb is not None:
                 try:
                     reply_cb(reply)
@@ -417,46 +524,6 @@ class AIResponseHandler:
             self.log("[AI] AI request timed out (>90 s).")
         except Exception as exc:
             self.log(f"[AI] Error: {exc}")
-
-    def _query_openai(self, endpoint: str, model: str, api_key: str,
-                      system_prompt: str, username: str, message: str) -> str:
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": f"{username}: {message}"},
-            ],
-            "stream": False,
-            "max_tokens": 1500,
-        }
-        resp = requests.post(endpoint, headers=headers, json=payload, timeout=90)
-        resp.raise_for_status()
-        data   = resp.json()
-        msg    = data["choices"][0]["message"]
-        reply  = (msg.get("content") or "").strip()
-        if not reply:
-            finish = data["choices"][0].get("finish_reason", "")
-            if finish == "length":
-                self.log("[AI] Ran out of tokens mid-think — try a shorter system prompt or a non-reasoning model.")
-        return reply
-
-    def _query_anthropic(self, endpoint: str, model: str, api_key: str,
-                         system_prompt: str, username: str, message: str) -> str:
-        headers = {
-            "x-api-key":         api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type":      "application/json",
-        }
-        payload = {
-            "model":      model,
-            "max_tokens": 1500,
-            "system":     system_prompt,
-            "messages":   [{"role": "user", "content": f"{username}: {message}"}],
-        }
-        resp = requests.post(endpoint, headers=headers, json=payload, timeout=90)
-        resp.raise_for_status()
-        return resp.json()["content"][0]["text"].strip()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
