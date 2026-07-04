@@ -46,12 +46,6 @@ import requests
 
 # ── Optional dependencies (graceful degradation) ────────────────────────────
 try:
-    import pygame
-    HAS_PYGAME = True
-except Exception:
-    HAS_PYGAME = False
-
-try:
     import pydirectinput
     pydirectinput.PAUSE = 0.03
     HAS_PYDIRECTINPUT = True
@@ -147,12 +141,15 @@ class GameInputController:
 # ══════════════════════════════════════════════════════════════════════════════
 class TTSEngine:
     """
-    Text-to-Speech via Piper TTS (subprocess).
+    Text-to-Speech via Piper TTS (persistent subprocess).
 
-    speak(text) enqueues work; a single daemon thread dequeues and processes
-    serially so audio clips never overlap.  The subprocess writes a temp .wav
-    which is base64-encoded and passed to the on_audio callback (if set) for
-    delivery to browser clients via SSE.
+    speak(text) enqueues work; a single daemon _worker thread writes JSON
+    lines to a persistent Piper process kept alive across clips.  A _reader
+    daemon thread parses WAV frames from Piper's stdout (RIFF framing) and
+    forwards each frame to the on_audio callback for SSE delivery.
+
+    Model changes are detected on the next speak() call; Piper is restarted
+    automatically with the new model path.
     """
 
     def __init__(self, get_config, log, on_audio=None) -> None:
@@ -161,8 +158,10 @@ class TTSEngine:
         self.on_audio = on_audio          # callable(wav_b64: str) | None
         self._q: queue.Queue[str | None] = queue.Queue()
         self._stop_event = threading.Event()
-        self._current_proc: subprocess.Popen | None = None
-        self._proc_lock = threading.Lock()
+        self._piper_proc: subprocess.Popen | None = None
+        self._piper_lock = threading.Lock()
+        self._current_model: str = ""
+        self._launch_piper(self.get_config())
         threading.Thread(target=self._worker, name="TTS-Worker", daemon=True).start()
 
     def speak(self, text: str) -> None:
@@ -170,10 +169,10 @@ class TTSEngine:
 
     def stop(self) -> None:
         self._q.put(None)
+        self._kill_piper()
 
     def panic(self) -> None:
-        """Immediately silence all audio and drain the pending queue."""
-        # Drain pending items; preserve any stop() sentinel so the worker can exit.
+        """Drain the queue and signal the reader thread to discard the current frame."""
         saw_stop = False
         while True:
             try:
@@ -184,13 +183,105 @@ class TTSEngine:
                 break
         if saw_stop:
             self._q.put(None)
-        # Signal the play loop to abort
         self._stop_event.set()
-        # Kill any running subprocess (Piper synthesis or system audio player)
-        with self._proc_lock:
-            if self._current_proc and self._current_proc.poll() is None:
-                self._current_proc.kill()
-                self._current_proc = None
+
+    # ── internal ─────────────────────────────────────────────────────────────
+
+    def _kill_piper(self) -> None:
+        with self._piper_lock:
+            proc = self._piper_proc
+            self._piper_proc = None
+        if proc:
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+    def _launch_piper(self, cfg: dict) -> None:
+        piper_exe  = cfg.get("piper_exe")   or "piper"
+        model_path = cfg.get("model_path")  or ""
+        cfg_path   = cfg.get("config_path") or ""
+
+        if not model_path:
+            return
+
+        # Kill old process before starting a new one
+        with self._piper_lock:
+            old_proc = self._piper_proc
+            self._piper_proc = None
+        if old_proc:
+            try:
+                old_proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                old_proc.kill()
+            except Exception:
+                pass
+
+        cmd = [piper_exe, "--model", model_path, "--json-input"]
+        if cfg_path:
+            cmd += ["--config", cfg_path]
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            with self._piper_lock:
+                self._piper_proc = proc
+                self._current_model = model_path
+            threading.Thread(target=self._reader, args=(proc,),
+                             name="TTS-Reader", daemon=True).start()
+        except FileNotFoundError:
+            self.log(f"[TTS] Piper executable not found: '{piper_exe}'")
+        except Exception as exc:
+            self.log(f"[TTS] Failed to start Piper: {exc}")
+
+    def _reader(self, proc: subprocess.Popen) -> None:
+        """Parse WAV frames from Piper stdout; discard frames when _stop_event is set."""
+        try:
+            while True:
+                header = self._read_exactly(proc.stdout, 8)
+                if header is None or header[:4] != b'RIFF':
+                    break
+                chunk_size = int.from_bytes(header[4:8], 'little')
+                rest = self._read_exactly(proc.stdout, chunk_size)
+                if rest is None:
+                    break
+                if self._stop_event.is_set():
+                    self._stop_event.clear()
+                    continue
+                if self.on_audio:
+                    wav_b64 = base64.b64encode(header + rest).decode("ascii")
+                    self.on_audio(wav_b64)
+        except Exception as exc:
+            with self._piper_lock:
+                if self._piper_proc is proc:
+                    self.log(f"[TTS] Reader error: {exc}")
+        finally:
+            with self._piper_lock:
+                if self._piper_proc is proc:
+                    self._piper_proc = None
+
+    @staticmethod
+    def _read_exactly(f, n: int) -> bytes | None:
+        buf = bytearray()
+        while len(buf) < n:
+            try:
+                chunk = f.read(n - len(buf))
+            except Exception:
+                return None
+            if not chunk:
+                return None
+            buf += chunk
+        return bytes(buf)
 
     # ── worker ───────────────────────────────────────────────────────────────
 
@@ -200,87 +291,40 @@ class TTSEngine:
             if item is None:
                 break
             if self._stop_event.is_set():
-                self._stop_event.clear()  # consume panic — skip this item, resume on next
+                self._stop_event.clear()
                 continue
             self._synthesize(item)
 
     def _synthesize(self, text: str) -> None:
         cfg        = self.get_config()
-        piper_exe  = cfg.get("piper_exe")   or "piper"
-        model_path = cfg.get("model_path")  or ""
-        cfg_path   = cfg.get("config_path") or ""
+        model_path = cfg.get("model_path") or ""
 
         if not model_path:
             self.log("[TTS] No voice model configured — skipping speech.")
             return
 
-        tmp_path: str | None = None
+        with self._piper_lock:
+            needs_restart = (model_path != self._current_model)
+
+        if needs_restart:
+            self._launch_piper(cfg)
+
+        with self._piper_lock:
+            proc = self._piper_proc
+
+        if proc is None:
+            self._launch_piper(cfg)
+            with self._piper_lock:
+                proc = self._piper_proc
+            if proc is None:
+                return
+
         try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                tmp_path = f.name
-
-            if self._stop_event.is_set():
-                return
-
-            cmd = [piper_exe, "--model", model_path, "--output_file", tmp_path]
-            if cfg_path:
-                cmd += ["--config", cfg_path]
-
-            with self._proc_lock:
-                if self._stop_event.is_set():
-                    return
-                proc = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                )
-                self._current_proc = proc
-
-            try:
-                _, stderr_bytes = proc.communicate(input=text.encode("utf-8"), timeout=30)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                try:
-                    proc.communicate(timeout=5)
-                except subprocess.TimeoutExpired:
-                    threading.Thread(
-                        target=proc.communicate, daemon=True,
-                    ).start()
-                self.log("[TTS] Piper synthesis timed out.")
-                return
-            finally:
-                with self._proc_lock:
-                    if self._current_proc is proc:
-                        self._current_proc = None
-
-            if self._stop_event.is_set():
-                return
-
-            if proc.returncode == -9:
-                self.log("[TTS] Piper was killed unexpectedly (SIGKILL).")
-                return
-
-            if proc.returncode != 0:
-                err = stderr_bytes.decode("utf-8", errors="replace").strip()
-                self.log(f"[TTS] Piper error: {err}")
-                return
-
-            if self.on_audio and not self._stop_event.is_set():
-                with open(tmp_path, "rb") as _f:
-                    wav_b64 = base64.b64encode(_f.read()).decode("ascii")
-                self.on_audio(wav_b64)
-
-        except FileNotFoundError:
-            self.log(f"[TTS] Piper executable not found: '{piper_exe}'")
-        except Exception as exc:
-            self.log(f"[TTS] Unexpected error: {exc}")
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+            line = json.dumps({"text": text}).encode() + b'\n'
+            proc.stdin.write(line)
+            proc.stdin.flush()
+        except OSError as exc:
+            self.log(f"[TTS] Write to Piper failed: {exc}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -831,7 +875,6 @@ class WebApp:
 
     def _log_platform_info(self) -> None:
         libs = []
-        libs.append("pygame ✓" if HAS_PYGAME else "pygame ✗")
         libs.append("pydirectinput ✓" if HAS_PYDIRECTINPUT else "pydirectinput ✗")
         libs.append("pynput ✓" if HAS_PYNPUT else "pynput ✗")
         self._log(f"[System] Libraries: {', '.join(libs)}")
@@ -1127,7 +1170,7 @@ class WebApp:
             tts = self._tts
             if tts:
                 tts.panic()
-            self._log("[TTS] Panic — audio stopped and queue cleared.")
+                self._log("[TTS] Panic — audio stopped and queue cleared.")
             msg = "event: tts-panic\ndata: {}\n\n"
             with self._log_lock:
                 for q in list(self._sse_clients):
