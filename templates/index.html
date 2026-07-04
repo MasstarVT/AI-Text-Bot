@@ -246,6 +246,7 @@ textarea{resize:vertical;font-family:var(--mono)}
       <button class="tab"        onclick="showTab('ai')">AI</button>
       <button class="tab"        onclick="showTab('discord')">Discord</button>
       <button class="tab"        onclick="showTab('tts')">TTS</button>
+      <button class="tab"        onclick="showTab('thanks')">Thanks</button>
     </div>
     <div class="modal-body">
 
@@ -339,6 +340,36 @@ textarea{resize:vertical;font-family:var(--mono)}
             <button class="btn btn-neutral btn-sm" onclick="openBrowser('s-piper-cfg')">Browse</button>
           </div>
         </div>
+      </div>
+
+      <!-- Thanks tab -->
+      <div id="tab-thanks" class="tab-pane">
+        <div class="section-lbl">Enable</div>
+        <label class="row-check">
+          <input type="checkbox" id="s-thanks-enabled">
+          Enable thank-you responses
+        </label>
+
+        <div class="divider"></div>
+        <div class="section-lbl">Events</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px">
+          <label class="row-check"><input type="checkbox" id="s-thanks-sub"> New sub</label>
+          <label class="row-check"><input type="checkbox" id="s-thanks-resub"> Resub</label>
+          <label class="row-check"><input type="checkbox" id="s-thanks-gift"> Gifted sub</label>
+          <label class="row-check"><input type="checkbox" id="s-thanks-mystery"> Mystery gifts</label>
+          <label class="row-check"><input type="checkbox" id="s-thanks-bits"> Bits cheer</label>
+          <label class="row-check"><input type="checkbox" id="s-thanks-raid"> Raid</label>
+        </div>
+
+        <div class="divider"></div>
+        <div class="section-lbl">Delivery</div>
+        <label class="row-check"><input type="checkbox" id="s-thanks-chat"> Post to Twitch chat</label>
+        <label class="row-check"><input type="checkbox" id="s-thanks-tts"> Speak via TTS</label>
+
+        <div class="divider"></div>
+        <div class="section-lbl">Thank-you prompt</div>
+        <textarea id="s-thanks-prompt" rows="5" placeholder="You are a friendly Twitch streamer&#39;s bot. Thank viewers warmly and briefly…"></textarea>
+        <div class="hint">Leave blank to use the built-in default prompt.</div>
       </div>
 
     </div><!-- /modal-body -->
@@ -774,6 +805,16 @@ function openSettings() {
     el('s-piper-model').value       = s.piper_model       || '';
     el('s-piper-cfg').value         = s.piper_config      || '';
     toggleDiscordPrompt();
+    el('s-thanks-enabled').checked  = !!s.thanks_enabled;
+    el('s-thanks-sub').checked      = (s.thanks_sub !== false);
+    el('s-thanks-resub').checked    = (s.thanks_resub !== false);
+    el('s-thanks-gift').checked     = (s.thanks_gift !== false);
+    el('s-thanks-mystery').checked  = (s.thanks_mystery !== false);
+    el('s-thanks-bits').checked     = !!s.thanks_bits;
+    el('s-thanks-raid').checked     = (s.thanks_raid !== false);
+    el('s-thanks-chat').checked     = (s.thanks_chat !== false);
+    el('s-thanks-tts').checked      = (s.thanks_tts !== false);
+    el('s-thanks-prompt').value     = s.thanks_prompt || '';
     // provider
     if (s.llm_provider) {
       el('s-provider').value = s.llm_provider;
@@ -820,6 +861,16 @@ function saveSettings() {
     discord_trigger:          el('s-discord-trigger').value,
     discord_use_shared_prompt:el('s-discord-shared').checked,
     discord_prompt:           el('s-discord-prompt').value,
+    thanks_enabled:            el('s-thanks-enabled').checked,
+    thanks_sub:                el('s-thanks-sub').checked,
+    thanks_resub:              el('s-thanks-resub').checked,
+    thanks_gift:               el('s-thanks-gift').checked,
+    thanks_mystery:            el('s-thanks-mystery').checked,
+    thanks_bits:               el('s-thanks-bits').checked,
+    thanks_raid:               el('s-thanks-raid').checked,
+    thanks_chat:               el('s-thanks-chat').checked,
+    thanks_tts:                el('s-thanks-tts').checked,
+    thanks_prompt:             el('s-thanks-prompt').value,
   };
   api('/api/settings','POST', body).then(() => closeSettings());
 }
