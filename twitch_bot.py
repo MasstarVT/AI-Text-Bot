@@ -410,8 +410,11 @@ class AIResponseHandler:
             try:
                 chunk  = json.loads(data)
                 token  = chunk["choices"][0]["delta"].get("content") or ""
+                finish = chunk["choices"][0].get("finish_reason") or ""
             except (json.JSONDecodeError, KeyError, IndexError):
                 continue
+            if finish == "length":
+                self.log("[AI] Ran out of tokens mid-think — try a shorter system prompt or a non-reasoning model.")
             if not token:
                 continue
             full_tokens.append(token)
@@ -458,6 +461,10 @@ class AIResponseHandler:
                 continue
             try:
                 event = json.loads(raw_line[6:])
+                if event.get("type") == "message_delta":
+                    if event.get("delta", {}).get("stop_reason") == "max_tokens":
+                        self.log("[AI] Ran out of tokens mid-think — try a shorter system prompt or a non-reasoning model.")
+                    continue
                 if event.get("type") != "content_block_delta":
                     continue
                 token = event.get("delta", {}).get("text") or ""
@@ -501,9 +508,8 @@ class AIResponseHandler:
         _use_tts      = use_tts if use_tts is not None else cfg.get("tts_ai", True)
         fmt           = _PROVIDERS.get(provider, {}).get("fmt", "openai")
 
-        tts_cb = self.tts.speak if _use_tts else None
-
         try:
+            tts_cb = self.tts.speak if _use_tts else None
             if fmt == "anthropic":
                 reply = self._stream_anthropic(endpoint, model, api_key, system_prompt, username, message, tts_cb)
             else:

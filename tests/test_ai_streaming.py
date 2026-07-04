@@ -35,28 +35,6 @@ class FakeTTS:
 
 
 class TestAIStreaming(unittest.TestCase):
-    def _make_handler(self, provider="LM Studio"):
-        import sys, os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-        import twitch_bot
-
-        fake_tts = FakeTTS()
-        cfg = {
-            "provider": provider,
-            "endpoint": "http://localhost:1234/v1/chat/completions",
-            "model": "test-model",
-            "api_key": "",
-            "system_prompt": "You are a test bot.",
-            "tts_ai": True,
-        }
-        handler = twitch_bot.AIResponseHandler(
-            get_config=lambda: cfg,
-            log=lambda msg: None,
-            tts=fake_tts,
-        )
-        handler._fake_tts = fake_tts
-        return handler
-
     def test_openai_stream_dispatches_sentences(self):
         """Streaming OpenAI response dispatches completed sentences to TTS."""
         import sys, os

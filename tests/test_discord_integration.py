@@ -91,7 +91,7 @@ class TestAIHandlerReplyCallback(unittest.TestCase):
         def fake_post(url, headers=None, json=None, timeout=None, stream=None):
             captured_payload.append(json)
             mock_resp = MagicMock()
-            chunk = __import__("json").dumps({"choices": [{"delta": {"content": "OK"}, "finish_reason": None}]})
+            chunk = json.dumps({"choices": [{"delta": {"content": "OK"}, "finish_reason": None}]})
             mock_resp.iter_lines.return_value = iter([
                 b"data: " + chunk.encode(),
                 b"data: [DONE]",
