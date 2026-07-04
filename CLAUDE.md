@@ -46,6 +46,27 @@ Four independent checkboxes — AI fires if **any** enabled condition is met:
 
 Bits and channel-point data come from IRCv3 tags parsed in `TwitchIRCClient._handle`. Only text-required channel point redemptions appear in IRC; reward IDs are logged to the Console so users can copy them.
 
+## Thank-you responses (`_handle_event`)
+
+When enabled, the bot responds to Twitch channel events with AI-generated thank-you messages.
+
+Supported events (all via USERNOTICE, except bits which come via PRIVMSG):
+
+| Event | IRC `msg-id` | Config key |
+|---|---|---|
+| New sub | `sub` | `thanks_sub` |
+| Resub | `resub` | `thanks_resub` |
+| Gifted sub | `subgift` | `thanks_gift` |
+| Mystery gift subs | `submysterygift` | `thanks_mystery` |
+| Bits cheer | PRIVMSG `bits` tag | `thanks_bits` |
+| Raid | `raid` | `thanks_raid` |
+
+`TwitchIRCClient.on_event` is set to `TwitchBotApp._handle_event` in `_connect`. Event messages use `_THANKS_TEMPLATES` (module-level constant). The thank-you prompt (`thanks_prompt`) is separate from the main system prompt — falls back to `_DEFAULT_THANKS_PROMPT` if blank.
+
+Delivery is independently toggled: `thanks_chat` (post to IRC via `irc.say(channel, reply)`) and `thanks_tts` (passed as `use_tts` to `ai.handle`).
+
+**Note:** If both `trigger_bits` and `thanks_bits` are enabled simultaneously, a bits cheer fires two separate AI calls (one from `_route_ai`, one from `_handle_event`) with different system prompts.
+
 ## TTS panic / stop behaviour
 
 `TTSEngine` has two shutdown paths:
