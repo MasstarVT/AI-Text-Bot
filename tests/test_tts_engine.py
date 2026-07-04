@@ -47,21 +47,6 @@ class FakePiperProc:
 
 
 class TestTTSEnginePersistentPiper(unittest.TestCase):
-    def _make_engine(self, fake_proc=None):
-        import sys, os
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-        import twitch_bot
-
-        cfg = {"piper_exe": "piper", "model_path": "/voices/test.onnx", "config_path": ""}
-        received_audio = []
-        engine = twitch_bot.TTSEngine(
-            get_config=lambda: cfg,
-            log=lambda msg: None,
-            on_audio=lambda b64: received_audio.append(b64),
-        )
-        engine._received_audio = received_audio
-        return engine
-
     def test_speak_calls_on_audio(self):
         """speak() causes on_audio to be called with a base64 WAV string."""
         import sys, os

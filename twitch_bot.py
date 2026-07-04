@@ -12,8 +12,9 @@ THREADING MODEL
                 │   auto-reconnects on failure; parses PRIVMSG → _dispatch()
   AI thread     │ AIResponseHandler._worker() — HTTP to local LLM
                 │   dequeues (username, message) pairs, POSTs, enqueues TTS
-  TTS thread    │ TTSEngine._worker() — Piper subprocess → base64 WAV → SSE
-                │   dequeues text, runs piper binary, broadcasts audio to browser
+  TTS thread    │ TTSEngine._worker() — persistent Piper process + _reader thread
+                │   _worker writes JSON lines to Piper stdin; _reader parses RIFF
+                │   WAV frames from stdout and broadcasts base64 audio via SSE
   Input threads │ Short-lived daemon threads per key press (GameInputController)
 
 Cross-thread communication:
@@ -168,6 +169,11 @@ class TTSEngine:
         self._q.put(text)
 
     def stop(self) -> None:
+        while True:
+            try:
+                self._q.get_nowait()
+            except queue.Empty:
+                break
         self._q.put(None)
         self._kill_piper()
 
@@ -239,6 +245,10 @@ class TTSEngine:
                 self._current_model = model_path
             threading.Thread(target=self._reader, args=(proc,),
                              name="TTS-Reader", daemon=True).start()
+            threading.Thread(
+                target=lambda: proc.stderr.read(),
+                name="TTS-Stderr-Drain", daemon=True,
+            ).start()
         except FileNotFoundError:
             self.log(f"[TTS] Piper executable not found: '{piper_exe}'")
         except Exception as exc:
@@ -290,9 +300,6 @@ class TTSEngine:
             item = self._q.get()
             if item is None:
                 break
-            if self._stop_event.is_set():
-                self._stop_event.clear()
-                continue
             self._synthesize(item)
 
     def _synthesize(self, text: str) -> None:
