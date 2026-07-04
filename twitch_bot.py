@@ -239,7 +239,7 @@ class TTSEngine:
             except Exception:
                 pass
 
-        cmd = [piper_exe, "--model", model_path, "--json-input"]
+        cmd = [piper_exe, "--model", model_path, "--json-input", "--output_file", "-"]
         if cfg_path:
             cmd += ["--config", cfg_path]
 
