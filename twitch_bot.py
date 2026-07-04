@@ -1455,7 +1455,10 @@ class WebApp:
                                 self._config[k] = [str(u).lower().strip() for u in data[k] if u]
                         elif k in _INT_KEYS:
                             try:
-                                self._config[k] = int(data[k])
+                                v = int(data[k])
+                                if k == "thanks_cooldown_secs":
+                                    v = max(1, v)
+                                self._config[k] = v
                             except (TypeError, ValueError):
                                 pass
                         elif k in _BOOL_KEYS:
@@ -1860,8 +1863,8 @@ class WebApp:
             return
 
         if cooldown_enabled:
-            now = time.time()
             with self._thanks_lock:
+                now = time.time()
                 if now - self._last_thanks_time < cooldown_secs:
                     self._log(f"[Thanks] Cooldown active — skipping {event_type} from {username}")
                     return
