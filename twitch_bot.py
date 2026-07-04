@@ -930,6 +930,9 @@ class WebApp:
         # ── ignore list ────────────────────────────────────────────────────────
         "ignore_list_enabled": False,
         "ignore_list":         [],
+        # ── chat commands ──────────────────────────────────────────────────────
+        "chat_commands_enabled": False,
+        "chat_commands":         {},
     }
 
     def __init__(self) -> None:
@@ -1000,6 +1003,8 @@ class WebApp:
             "thanks_cooldown_secs":    int(settings.get("thanks_cooldown_secs", 30)),
             "ignore_list_enabled": settings.get("ignore_list_enabled", False),
             "ignore_list":         [str(u).lower().strip() for u in settings.get("ignore_list", []) if u],
+            "chat_commands_enabled": settings.get("chat_commands_enabled", False),
+            "chat_commands":         dict(settings.get("chat_commands", {})),
             "system_prompt":    "",
             # ── connection status ───────────────────────────────────────────
             "twitch_status":    "off",   # off / connecting / online
@@ -1230,6 +1235,8 @@ class WebApp:
             # ── ignore list ────────────────────────────────────────────────────
             "ignore_list_enabled": c.get("ignore_list_enabled", False),
             "ignore_list":         c.get("ignore_list",         []),
+            "chat_commands_enabled": c.get("chat_commands_enabled", False),
+            "chat_commands":         c.get("chat_commands",         {}),
         }
         with open(self._settings_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -1426,6 +1433,7 @@ class WebApp:
             "thanks_use_shared_prompt", "thanks_prompt",
             "thanks_cooldown_enabled", "thanks_cooldown_secs",
             "ignore_list_enabled", "ignore_list",
+            "chat_commands_enabled", "chat_commands",
         )
 
         @app.route("/api/settings", methods=["GET"])
@@ -1446,6 +1454,7 @@ class WebApp:
                 "thanks_use_shared_prompt",
                 "thanks_cooldown_enabled",
                 "ignore_list_enabled",
+                "chat_commands_enabled",
             }
             with self._config_lock:
                 for k in _SETTINGS_KEYS:
@@ -1453,6 +1462,13 @@ class WebApp:
                         if k == "ignore_list":
                             if isinstance(data[k], list):
                                 self._config[k] = [str(u).lower().strip() for u in data[k] if u]
+                        elif k == "chat_commands":
+                            if isinstance(data[k], dict):
+                                self._config[k] = {
+                                    str(cmd).lower().strip(): str(resp)
+                                    for cmd, resp in data[k].items()
+                                    if cmd and resp
+                                }
                         elif k in _INT_KEYS:
                             try:
                                 v = int(data[k])
@@ -1770,10 +1786,29 @@ class WebApp:
         if ignore_enabled and username.lower() in ignore_list:
             return
 
+        self._route_chat_commands(username, message)
         self._route_plays(username, message)
         self._route_ai(username, message, bits, reward_id)
         if bits > 0:
             self._handle_event("bits", username, {"bits": bits})
+
+    def _route_chat_commands(self, username: str, message: str) -> None:
+        with self._config_lock:
+            enabled  = self._config.get("chat_commands_enabled", False)
+            commands = dict(self._config.get("chat_commands", {}))
+            channel  = self._config.get("twitch_channel", "").lower().strip()
+        if not enabled or not channel:
+            return
+        word = message.strip().split()[0].lower() if message.strip() else ""
+        if not word.startswith("!"):
+            return
+        response = commands.get(word)
+        if not response:
+            return
+        irc = self._irc
+        if irc:
+            irc.say(channel, response)
+            self._log(f"[Commands] {username} → {word}")
 
     def _route_plays(self, username: str, message: str) -> None:
         with self._config_lock:

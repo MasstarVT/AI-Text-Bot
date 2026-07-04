@@ -249,6 +249,7 @@ textarea{resize:vertical;font-family:var(--mono)}
       <button class="tab"        onclick="showTab('tts')">TTS</button>
       <button class="tab"        onclick="showTab('thanks')">Thanks</button>
       <button class="tab"        onclick="showTab('ignore')">Ignore</button>
+      <button class="tab"        onclick="showTab('commands')">Commands</button>
     </div>
     <div class="modal-body">
 
@@ -405,6 +406,28 @@ textarea{resize:vertical;font-family:var(--mono)}
         <div class="section-lbl">Ignored Usernames</div>
         <textarea id="s-ignore-list" rows="6" placeholder="one username per line&#10;(case-insensitive)"></textarea>
         <div class="hint">Messages from these users will be completely ignored — no AI, no plays, no thanks.</div>
+      </div>
+
+      <!-- Commands tab -->
+      <div id="tab-commands" class="tab-pane">
+        <div class="section-lbl">Chat Commands</div>
+        <label class="row-check">
+          <input type="checkbox" id="s-cmd-enabled">
+          Enable custom !commands
+        </label>
+        <div class="hint">When a viewer types a !command, the bot posts the configured response without using AI.</div>
+        <div class="divider"></div>
+        <table id="cmd-table" style="width:100%;border-collapse:collapse;margin-bottom:8px">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Command</th>
+              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Response</th>
+              <th style="width:32px"></th>
+            </tr>
+          </thead>
+          <tbody id="cmd-rows"></tbody>
+        </table>
+        <button class="btn btn-neutral btn-sm" onclick="addCmdRow()">+ Add command</button>
       </div>
 
     </div><!-- /modal-body -->
@@ -857,6 +880,9 @@ function openSettings() {
     toggleThanksCooldown();
     el('s-ignore-enabled').checked = !!s.ignore_list_enabled;
     el('s-ignore-list').value      = (s.ignore_list || []).join('\n');
+    el('s-cmd-enabled').checked = !!s.chat_commands_enabled;
+    el('cmd-rows').innerHTML = '';
+    Object.entries(s.chat_commands || {}).forEach(([cmd, resp]) => addCmdRow(cmd, resp));
     // provider
     if (s.llm_provider) {
       el('s-provider').value = s.llm_provider;
@@ -918,6 +944,8 @@ function saveSettings() {
     thanks_cooldown_secs:    parseInt(el('s-thanks-cooldown-secs').value) || 30,
     ignore_list_enabled: el('s-ignore-enabled').checked,
     ignore_list:         el('s-ignore-list').value.split('\n').map(u => u.trim().toLowerCase()).filter(Boolean),
+    chat_commands_enabled: el('s-cmd-enabled').checked,
+    chat_commands:         getChatCommands(),
   };
   api('/api/settings','POST', body).then(() => closeSettings());
 }
@@ -973,6 +1001,32 @@ function getOAuthUrl() {
   log('[Auth] 5. Click Save Settings, then Connect.');
   window.open(url, '_blank');
   closeSettings();
+}
+
+function addCmdRow(cmd, resp) {
+  const tbody = el('cmd-rows');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td style="padding:2px 4px"><input type="text" placeholder="!hello" style="width:100%" value="${escHtml(cmd||'')}"></td>
+    <td style="padding:2px 4px"><input type="text" placeholder="Hey there!" style="width:100%" value="${escHtml(resp||'')}"></td>
+    <td style="padding:2px 4px;text-align:center"><button class="btn-icon" onclick="this.closest('tr').remove()">✕</button></td>
+  `;
+  tbody.appendChild(tr);
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function getChatCommands() {
+  const cmds = {};
+  el('cmd-rows').querySelectorAll('tr').forEach(tr => {
+    const inputs = tr.querySelectorAll('input');
+    const cmd  = inputs[0].value.trim().toLowerCase();
+    const resp = inputs[1].value.trim();
+    if (cmd && resp) cmds[cmd] = resp;
+  });
+  return cmds;
 }
 
 function toggleDiscordPrompt() {
