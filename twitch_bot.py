@@ -83,6 +83,12 @@ _CLAUDE_MODELS = [
     "claude-3-opus-20240229",
 ]
 
+_DEFAULT_THANKS_PROMPT = (
+    "You are a friendly Twitch streamer's bot. When a viewer subs, resubs, gifts subs, "
+    "cheers bits, or raids, respond with a warm, brief, personalized thank-you message "
+    "that fits naturally in Twitch chat. Keep it under two sentences. Do not use hashtags."
+)
+
 
 def _scan_voices_dir(voices_dir: str) -> list[str]:
     """Return sorted .onnx voice names (without extension) from voices_dir."""
@@ -896,6 +902,17 @@ class WebApp:
         "plays_enabled":     False,
         "command_map":       {},
         "last_prompt":       "",
+        # ── thank-you responses ────────────────────────────────────────────────
+        "thanks_enabled": False,
+        "thanks_sub":     True,
+        "thanks_resub":   True,
+        "thanks_gift":    True,
+        "thanks_mystery": True,
+        "thanks_bits":    False,
+        "thanks_raid":    True,
+        "thanks_chat":    True,
+        "thanks_tts":     True,
+        "thanks_prompt":  "",
     }
 
     def __init__(self) -> None:
@@ -951,6 +968,16 @@ class WebApp:
             "tts_ai":           settings.get("tts_ai",           True),
             "command_map":      dict(settings.get("command_map", {})),
             "last_prompt":      settings.get("last_prompt",      ""),
+            "thanks_enabled":   settings.get("thanks_enabled",  False),
+            "thanks_sub":       settings.get("thanks_sub",       True),
+            "thanks_resub":     settings.get("thanks_resub",     True),
+            "thanks_gift":      settings.get("thanks_gift",      True),
+            "thanks_mystery":   settings.get("thanks_mystery",   True),
+            "thanks_bits":      settings.get("thanks_bits",      False),
+            "thanks_raid":      settings.get("thanks_raid",      True),
+            "thanks_chat":      settings.get("thanks_chat",      True),
+            "thanks_tts":       settings.get("thanks_tts",       True),
+            "thanks_prompt":    settings.get("thanks_prompt",    ""),
             "system_prompt":    "",
             # ── connection status ───────────────────────────────────────────
             "twitch_status":    "off",   # off / connecting / online
@@ -1162,6 +1189,17 @@ class WebApp:
             "plays_enabled":    c.get("plays_enabled",    False),
             "command_map":      c.get("command_map",      {}),
             "last_prompt":      c.get("last_prompt",      ""),
+            # ── thank-you responses ────────────────────────────────────────
+            "thanks_enabled":   c.get("thanks_enabled",   False),
+            "thanks_sub":       c.get("thanks_sub",       True),
+            "thanks_resub":     c.get("thanks_resub",     True),
+            "thanks_gift":      c.get("thanks_gift",      True),
+            "thanks_mystery":   c.get("thanks_mystery",   True),
+            "thanks_bits":      c.get("thanks_bits",      False),
+            "thanks_raid":      c.get("thanks_raid",      True),
+            "thanks_chat":      c.get("thanks_chat",      True),
+            "thanks_tts":       c.get("thanks_tts",       True),
+            "thanks_prompt":    c.get("thanks_prompt",    ""),
         }
         with open(self._settings_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -1597,6 +1635,7 @@ class WebApp:
             on_ready=self._on_irc_ready,
             on_reconnecting=self._on_irc_reconnecting,
         )
+        self._irc.on_event = self._handle_event
         self._irc.connect()
         self._log("[System] Connecting to Twitch IRC…")
 
@@ -1678,6 +1717,8 @@ class WebApp:
             self._log(f"[Chat] Reward ID: {reward_id}")
         self._route_plays(username, message)
         self._route_ai(username, message, bits, reward_id)
+        if bits > 0:
+            self._handle_event("bits", username, {"bits": bits})
 
     def _route_plays(self, username: str, message: str) -> None:
         with self._config_lock:
@@ -1739,6 +1780,54 @@ class WebApp:
         ai = self._ai
         if triggered and ai:
             ai.handle(username, message)
+
+    def _handle_event(self, event_type: str, username: str, extra: dict) -> None:
+        with self._config_lock:
+            enabled   = self._config.get("thanks_enabled", False)
+            event_map = {
+                "sub":         self._config.get("thanks_sub",     True),
+                "resub":       self._config.get("thanks_resub",   True),
+                "subgift":     self._config.get("thanks_gift",    True),
+                "mysterygift": self._config.get("thanks_mystery", True),
+                "bits":        self._config.get("thanks_bits",    False),
+                "raid":        self._config.get("thanks_raid",    True),
+            }
+            chat_on = self._config.get("thanks_chat",    True)
+            tts_on  = self._config.get("thanks_tts",     True)
+            prompt  = self._config.get("thanks_prompt",  "") or _DEFAULT_THANKS_PROMPT
+            channel = self._config.get("twitch_channel", "").lower().strip()
+
+        if not enabled or not event_map.get(event_type, False):
+            return
+
+        ai = self._ai
+        if not ai:
+            return
+
+        _templates = {
+            "sub":         lambda u, e: f"[EVENT] {u} just subscribed! Thank them warmly.",
+            "resub":       lambda u, e: (
+                f"[EVENT] {u} resubscribed for {e.get('months','?')} months "
+                f"({e.get('streak','0')} month streak)! Thank them."
+            ),
+            "subgift":     lambda u, e: f"[EVENT] {u} gifted a sub to {e.get('recipient','a viewer')}! Thank {u}.",
+            "mysterygift": lambda u, e: f"[EVENT] {u} gifted {e.get('count','?')} subs to the community! Thank them.",
+            "raid":        lambda u, e: f"[EVENT] {u} raided with {e.get('viewers','?')} viewers! Welcome them and their community.",
+            "bits":        lambda u, e: f"[EVENT] {u} cheered {e.get('bits','?')} bits! Thank them.",
+        }
+        if event_type not in _templates:
+            return
+        msg = _templates[event_type](username, extra)
+        self._log(f"[Thanks] {event_type} from {username}")
+
+        def reply_cb(reply: str) -> None:
+            self._log(f"[Thanks] → {reply}")
+            if chat_on:
+                irc = self._irc
+                if irc and channel:
+                    irc.say(channel, reply)
+
+        ai.handle(username, msg, reply_cb=reply_cb, prompt_override=prompt, use_tts=tts_on)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
