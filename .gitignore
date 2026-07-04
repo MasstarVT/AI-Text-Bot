@@ -6,6 +6,7 @@
 
 # Bundled Piper TTS binary (25 MB — downloaded separately)
 piper/
+*.wav
 
 # Voice model binaries (large — only commit the .json config)
 Voices/*.onnx
