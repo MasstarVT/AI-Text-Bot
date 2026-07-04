@@ -1464,11 +1464,16 @@ class WebApp:
                                 self._config[k] = [str(u).lower().strip() for u in data[k] if u]
                         elif k == "chat_commands":
                             if isinstance(data[k], dict):
-                                self._config[k] = {
-                                    str(cmd).lower().strip(): str(resp)
-                                    for cmd, resp in data[k].items()
-                                    if cmd and resp
-                                }
+                                cmds = {}
+                                for cmd, resp in data[k].items():
+                                    cmd  = str(cmd).lower().strip()
+                                    resp = str(resp).strip()
+                                    if not cmd or not resp:
+                                        continue
+                                    if not cmd.startswith("!"):
+                                        cmd = "!" + cmd
+                                    cmds[cmd] = resp
+                                self._config[k] = cmds
                         elif k in _INT_KEYS:
                             try:
                                 v = int(data[k])
@@ -1807,7 +1812,7 @@ class WebApp:
             return
         irc = self._irc
         if irc:
-            irc.say(channel, response)
+            irc.say(channel, response[:500])
             self._log(f"[Commands] {username} → {word}")
 
     def _route_plays(self, username: str, message: str) -> None:
