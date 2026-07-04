@@ -358,10 +358,11 @@ class AIResponseHandler:
     it must not make GUI/CTk calls directly.
     """
 
-    def __init__(self, get_config, log, tts: TTSEngine) -> None:
-        self.get_config = get_config   # callable → dict(endpoint, model, system_prompt, tts_ai)
-        self.log = log
-        self.tts = tts
+    def __init__(self, get_config, log, tts: TTSEngine, on_thinking=None) -> None:
+        self.get_config   = get_config   # callable → dict(endpoint, model, system_prompt, tts_ai)
+        self.log          = log
+        self.tts          = tts
+        self._on_thinking = on_thinking  # callable(bool) | None
         self._q: queue.Queue[tuple | None] = queue.Queue()
         threading.Thread(target=self._worker, name="AI-Worker", daemon=True).start()
 
@@ -493,7 +494,14 @@ class AIResponseHandler:
             if item is None:
                 break
             username, message, reply_cb, prompt_override, use_tts = item
-            self._query(username, message, reply_cb=reply_cb, prompt_override=prompt_override, use_tts=use_tts)
+            if self._on_thinking:
+                self._on_thinking(True)
+            try:
+                self._query(username, message, reply_cb=reply_cb,
+                            prompt_override=prompt_override, use_tts=use_tts)
+            finally:
+                if self._on_thinking:
+                    self._on_thinking(False)
 
     def _query(self, username: str, message: str, reply_cb=None, prompt_override: str | None = None, use_tts: bool | None = None) -> None:
         cfg           = self.get_config()
@@ -1004,6 +1012,13 @@ class WebApp:
     def _broadcast_tts_audio(self, wav_b64: str) -> None:
         """Push a TTS audio clip to all SSE clients."""
         msg = f"event: tts\ndata: {json.dumps({'wav': wav_b64})}\n\n"
+        with self._log_lock:
+            for q in list(self._sse_clients):
+                q.put(msg)
+
+    def _broadcast_ai_thinking(self, thinking: bool) -> None:
+        event = "ai-thinking" if thinking else "ai-done"
+        msg = f"event: {event}\ndata: {{}}\n\n"
         with self._log_lock:
             for q in list(self._sse_clients):
                 q.put(msg)
@@ -1525,6 +1540,7 @@ class WebApp:
             get_config=self._get_ai_cfg,
             log=self._log,
             tts=self._tts,
+            on_thinking=self._broadcast_ai_thinking,
         )
 
     def _stop_services(self) -> None:

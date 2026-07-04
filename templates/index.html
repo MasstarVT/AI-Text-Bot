@@ -68,6 +68,7 @@ textarea{resize:vertical;font-family:var(--mono)}
 .row-check{display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer}
 .hint{color:var(--muted);font-size:11px;padding:2px 0 6px}
 .warn{color:var(--orange);font-size:11px;padding:4px 0}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 .section-lbl{font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.06em;padding:8px 0 4px}
 .divider{border-top:1px solid var(--border);margin:8px 0}
 
@@ -183,6 +184,7 @@ textarea{resize:vertical;font-family:var(--mono)}
   <div class="card">
     <div class="panel-hdr">
       <span>AI Chat Reading Active</span>
+      <span id="ai-thinking-indicator" style="display:none;color:var(--orange);font-size:11px;animation:pulse 1s infinite">● thinking…</span>
       <label class="toggle" title="Toggle AI">
         <input type="checkbox" id="ai-toggle" onchange="toggleAI()">
         <span class="slider"></span>
@@ -462,6 +464,8 @@ function _ttsPanic() {
 // ── SSE stream ────────────────────────────────────────────────────────────
 function startSSE() {
   _ttsPanic();
+  const ind = el('ai-thinking-indicator');
+  if (ind) ind.style.display = 'none';
   const es = new EventSource('/stream');
   es.onmessage = e => log(e.data);
   es.addEventListener('status', e => {
@@ -472,6 +476,8 @@ function startSSE() {
     try { _ttsEnqueue(JSON.parse(e.data).wav); } catch (err) { console.error('[TTS] bad tts event:', err); }
   });
   es.addEventListener('tts-panic', () => _ttsPanic());
+  es.addEventListener('ai-thinking', () => { el('ai-thinking-indicator').style.display = 'inline'; });
+  es.addEventListener('ai-done',     () => { el('ai-thinking-indicator').style.display = 'none'; });
   es.onerror = () => { es.close(); setTimeout(startSSE, 3000); };
 }
 
