@@ -1700,6 +1700,7 @@ class WebApp:
             "thanks_cooldown_enabled", "thanks_cooldown_secs",
             "ignore_list_enabled", "ignore_list",
             "chat_commands_enabled", "chat_commands",
+            "cmd_list_enabled",
             "scheduled_msgs",
             "ai_context_enabled", "ai_context_size",
         )
@@ -1723,6 +1724,7 @@ class WebApp:
                 "thanks_cooldown_enabled",
                 "ignore_list_enabled",
                 "chat_commands_enabled",
+                "cmd_list_enabled",
                 "ai_context_enabled",
             }
             with self._config_lock:
@@ -1734,14 +1736,28 @@ class WebApp:
                         elif k == "chat_commands":
                             if isinstance(data[k], dict):
                                 cmds = {}
-                                for cmd, resp in data[k].items():
-                                    cmd  = str(cmd).lower().strip()
-                                    resp = str(resp).strip()
-                                    if not cmd or not resp:
-                                        continue
+                                for cmd, entry in data[k].items():
+                                    cmd = str(cmd).lower().strip()
                                     if not cmd.startswith("!"):
                                         cmd = "!" + cmd
-                                    cmds[cmd] = resp
+                                    if isinstance(entry, dict):
+                                        response = str(entry.get("response", "")).strip()
+                                        if not cmd or not response:
+                                            continue
+                                        try:
+                                            cooldown = max(0, int(entry.get("cooldown", 0)))
+                                        except (TypeError, ValueError):
+                                            cooldown = 0
+                                        cooldown_type = str(entry.get("cooldown_type", "global"))
+                                        if cooldown_type not in ("global", "user"):
+                                            cooldown_type = "global"
+                                        cmds[cmd] = {"response": response, "cooldown": cooldown,
+                                                     "cooldown_type": cooldown_type}
+                                    else:
+                                        resp = str(entry).strip()
+                                        if cmd and resp:
+                                            cmds[cmd] = {"response": resp, "cooldown": 0,
+                                                         "cooldown_type": "global"}
                                 self._config[k] = cmds
                         elif k == "scheduled_msgs":
                             if isinstance(data[k], list):
