@@ -2135,24 +2135,45 @@ class WebApp:
 
     def _route_chat_commands(self, username: str, message: str) -> None:
         with self._config_lock:
-            enabled  = self._config.get("chat_commands_enabled", False)
-            commands = dict(self._config.get("chat_commands", {}))
-            channel  = self._config.get("twitch_channel", "").lower().strip()
+            enabled      = self._config.get("chat_commands_enabled", False)
+            commands     = dict(self._config.get("chat_commands", {}))
+            channel      = self._config.get("twitch_channel", "").lower().strip()
+            list_enabled = self._config.get("cmd_list_enabled", False)
         if not enabled or not channel:
             return
         word = message.strip().split()[0].lower() if message.strip() else ""
         if not word.startswith("!"):
             return
         entry = commands.get(word)
-        if not entry:
-            return
-        response = entry.get("response", "") if isinstance(entry, dict) else str(entry)
-        args = message.strip()[len(word):].strip()
-        response = _apply_placeholders(response, username, channel, word, args)
-        irc = self._irc
-        if irc:
-            irc.say(channel, response[:500])
-            self._log(f"[Commands] {username} → {word}")
+        if entry:
+            cooldown      = int(entry.get("cooldown", 0))
+            cooldown_type = entry.get("cooldown_type", "global")
+            if cooldown > 0:
+                now = time.time()
+                if cooldown_type == "user":
+                    key  = (word, username)
+                    last = self._cmd_user_cooldowns.get(key, 0.0)
+                    if now - last < cooldown:
+                        return
+                    self._cmd_user_cooldowns[key] = now
+                else:
+                    last = self._cmd_global_cooldowns.get(word, 0.0)
+                    if now - last < cooldown:
+                        return
+                    self._cmd_global_cooldowns[word] = now
+            response = entry.get("response", "")
+            args     = message.strip()[len(word):].strip()
+            response = _apply_placeholders(response, username, channel, word, args)
+            irc = self._irc
+            if irc:
+                irc.say(channel, response[:500])
+                self._log(f"[Commands] {username} → {word}")
+        elif word == "!commands" and list_enabled:
+            cmd_list = "Commands: " + ", ".join(sorted(commands.keys()))
+            irc = self._irc
+            if irc:
+                irc.say(channel, cmd_list[:500])
+                self._log(f"[Commands] {username} → !commands (auto-list)")
 
     def _route_plays(self, username: str, message: str) -> None:
         with self._config_lock:
