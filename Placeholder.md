@@ -16,7 +16,7 @@ Use these placeholders in your custom `!command` response text. They are replace
 Command: `!so`
 Response: `Go check out %args%, they're an awesome streamer! PogChamp`
 User types: `!so @StreamerName`
-Bot posts: `Go check out @StreamerName — they're an awesome streamer! PogChamp`
+Bot posts: `Go check out @StreamerName, they're an awesome streamer! PogChamp`
 
 ---
 

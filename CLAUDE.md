@@ -79,7 +79,18 @@ Config keys: `ignore_list_enabled` (bool), `ignore_list` (list of lowercase stri
 
 ## Custom `!command` responses (`_route_chat_commands`)
 
-When `chat_commands_enabled` is `True` and a message starts with a registered `!word`, `_route_chat_commands` posts the configured static reply to Twitch chat without invoking the AI. Called from `_dispatch` after the ignore check and before `_route_plays`. Commands are stored as `dict[str, str]` in `chat_commands` (keys normalised to lowercase, auto-prefixed with `!`). Responses are truncated to 500 chars before sending.
+When `chat_commands_enabled` is `True` and a message starts with a registered `!word`, `_route_chat_commands` posts the configured reply to Twitch chat without invoking the AI. Called from `_dispatch` after the ignore check and before `_route_plays`. Commands are stored as `dict[str, str]` in `chat_commands` (keys normalised to lowercase, auto-prefixed with `!`).
+
+Response strings support placeholder substitution via `_apply_placeholders` (module-level, `twitch_bot.py`):
+
+| Placeholder | Value |
+|---|---|
+| `%user%` | Twitch login username of the chatter |
+| `%channel%` | Twitch channel name |
+| `%command%` | The command word (always lowercase, e.g. `!so`) |
+| `%args%` | Everything after the command word; empty string if nothing |
+
+Unknown placeholders (e.g. `%usr%`) are left as-is. Responses are truncated to 500 chars **after** substitution. See `Placeholder.md` in the repo root for user-facing docs.
 
 **Note:** If an AI trigger (e.g. every-N counter) fires on the same message as a command match, both responses go to chat. This is by design — the two systems are independent.
 
