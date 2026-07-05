@@ -1127,6 +1127,7 @@ class WebApp:
         # ── chat commands ──────────────────────────────────────────────────────
         "chat_commands_enabled": False,
         "chat_commands":         {},
+        "cmd_list_enabled":      False,
         # ── scheduled messages ─────────────────────────────────────────────────
         "scheduled_msgs": [],
         # ── chat context ───────────────────────────────────────────────────────
@@ -1206,7 +1207,12 @@ class WebApp:
             "ignore_list_enabled": settings.get("ignore_list_enabled", False),
             "ignore_list":         [str(u).lower().strip() for u in settings.get("ignore_list", []) if u],
             "chat_commands_enabled": settings.get("chat_commands_enabled", False),
-            "chat_commands":         dict(settings.get("chat_commands", {})),
+            "chat_commands": {
+                k: (v if isinstance(v, dict)
+                    else {"response": v, "cooldown": 0, "cooldown_type": "global"})
+                for k, v in settings.get("chat_commands", {}).items()
+            },
+            "cmd_list_enabled": settings.get("cmd_list_enabled", False),
             "scheduled_msgs": list(settings.get("scheduled_msgs", [])),
             "ai_context_enabled": settings.get("ai_context_enabled", False),
             "ai_context_size":    int(settings.get("ai_context_size", 5)),
@@ -1221,6 +1227,8 @@ class WebApp:
         self._history_lock  = threading.Lock()
         self._last_thanks_time: float = 0.0
         self._thanks_lock = threading.Lock()
+        self._cmd_global_cooldowns: dict[str, float]             = {}
+        self._cmd_user_cooldowns:   dict[tuple[str, str], float] = {}
 
         # Load last-used prompt content from file
         last = self._config["last_prompt"]
@@ -1489,6 +1497,7 @@ class WebApp:
             "ignore_list":         c.get("ignore_list",         []),
             "chat_commands_enabled": c.get("chat_commands_enabled", False),
             "chat_commands":         c.get("chat_commands",         {}),
+            "cmd_list_enabled":      c.get("cmd_list_enabled",      False),
             "scheduled_msgs": c.get("scheduled_msgs", []),
             "ai_context_enabled": c.get("ai_context_enabled", False),
             "ai_context_size":    c.get("ai_context_size",    5),
@@ -1760,6 +1769,7 @@ class WebApp:
                 if "system_prompt" in data:
                     self._config["system_prompt"] = data["system_prompt"]
             self._save_env()
+            self._save_settings()
             self._log("[System] Settings saved.")
             return _flask.jsonify({"ok": True})
 
