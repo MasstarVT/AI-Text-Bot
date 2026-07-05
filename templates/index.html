@@ -257,19 +257,28 @@ textarea{resize:vertical;font-family:var(--mono)}
       <!-- Twitch tab -->
       <div id="tab-twitch" class="tab-pane active">
         <div class="field-row"><label>Channel</label><input id="s-channel" type="text" placeholder="channelname"></div>
-        <div class="field-row"><label>Bot Username</label><input id="s-username" type="text" placeholder="mybotname"></div>
+        <div class="field-row"><label>Bot Username</label><input id="s-bot-username" type="text" placeholder="mybotname"></div>
+        <div class="field-row"><label>Bot OAuth Token</label>
+          <div class="field-with-btn">
+            <input id="s-bot-token" type="password" placeholder="oauth:xxxxxxxxxxxxxxxx">
+            <button class="btn-icon btn-sm" onclick="toggleVis(this.previousElementSibling)">👁</button>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <div class="field-row"><label>Broadcaster Username</label><input id="s-username" type="text" placeholder="streamername"></div>
         <div class="field-row"><label>Client ID</label>
           <div class="field-with-btn">
             <input id="s-client-id" type="text" placeholder="your Twitch app client ID">
             <button class="btn btn-neutral btn-sm" onclick="getOAuthUrl()">Get Token ↗</button>
           </div>
         </div>
-        <div class="field-row"><label>OAuth Token</label>
+        <div class="field-row"><label>Broadcaster Token</label>
           <div class="field-with-btn">
             <input id="s-token" type="password" placeholder="oauth:xxxxxxxxxxxxxxxx">
             <button class="btn-icon btn-sm" onclick="toggleVis(this.previousElementSibling)">👁</button>
           </div>
         </div>
+        <div class="hint">(optional — follow events only)</div>
       </div>
 
       <!-- AI tab -->
@@ -883,6 +892,8 @@ function openSettings() {
   // Pre-populate fields from current server state
   api('/api/settings').then(s => {
     el('s-channel').value           = s.twitch_channel    || '';
+    el('s-bot-username').value      = s.bot_username      || '';
+    el('s-bot-token').value         = s.bot_token         || '';
     el('s-username').value          = s.twitch_username   || '';
     el('s-client-id').value         = s.twitch_client_id  || '';
     el('s-token').value             = s.twitch_token      || '';
@@ -954,6 +965,8 @@ function showTab(name) {
 function saveSettings() {
   const body = {
     twitch_channel:           el('s-channel').value.trim(),
+    bot_username:             el('s-bot-username').value.trim(),
+    bot_token:                el('s-bot-token').value.trim(),
     twitch_username:          el('s-username').value.trim(),
     twitch_client_id:         el('s-client-id').value.trim(),
     twitch_token:             el('s-token').value.trim(),
