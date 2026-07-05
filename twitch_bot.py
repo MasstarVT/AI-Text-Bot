@@ -1262,7 +1262,7 @@ class WebApp:
 
         # Auto-connect if credentials already saved
         if all(self._config.get(k) for k in
-               ("twitch_channel", "twitch_username", "twitch_token")):
+               ("twitch_channel", "bot_username", "bot_token")):
             t = threading.Timer(0.8, self._connect)
             t.daemon = True
             t.start()
@@ -1373,9 +1373,9 @@ class WebApp:
     def _get_irc_creds(self) -> dict:
         with self._config_lock:
             return {
-                "channel":  self._config.get("twitch_channel",  ""),
-                "username": self._config.get("twitch_username", ""),
-                "token":    self._config.get("twitch_token",    ""),
+                "channel":  self._config.get("twitch_channel", ""),
+                "username": self._config.get("bot_username",   ""),
+                "token":    self._config.get("bot_token",      ""),
             }
 
     def _get_eventsub_creds(self) -> dict:
@@ -1970,7 +1970,16 @@ class WebApp:
         self._save_env()
         with self._config_lock:
             self._config["twitch_status"] = "connecting"
-            has_client_id = bool(self._config.get("twitch_client_id", "").strip())
+            bot_username          = self._config.get("bot_username",    "").strip()
+            bot_token             = self._config.get("bot_token",       "").strip()
+            has_client_id         = bool(self._config.get("twitch_client_id", "").strip())
+            has_broadcaster_token = bool(self._config.get("twitch_token",     "").strip())
+        if not bot_username or not bot_token:
+            with self._config_lock:
+                self._config["twitch_status"] = "error"
+            self._broadcast_status()
+            self._log("[System] Error: Bot Username and Bot OAuth Token are required.")
+            return
         self._broadcast_status()
         self._irc = TwitchIRCClient(
             get_creds=self._get_irc_creds,
@@ -1982,13 +1991,15 @@ class WebApp:
         )
         self._irc.connect()
         self._log("[System] Connecting to Twitch IRC…")
-        if has_client_id:
+        if has_client_id and has_broadcaster_token:
             self._eventsub = EventSubClient(
                 get_creds=self._get_eventsub_creds,
                 log=self._log,
                 on_event=self._handle_event,
             )
             self._eventsub.connect()
+        elif has_client_id:
+            self._log("[EventSub] Broadcaster token not set — follow events disabled")
         else:
             self._log("[EventSub] No Client ID set — follow events disabled")
 
