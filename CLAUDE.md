@@ -77,6 +77,8 @@ When `ignore_list_enabled` is `True`, `_dispatch` returns early for any username
 
 Config keys: `ignore_list_enabled` (bool), `ignore_list` (list of lowercase strings).
 
+**Bot self-filter:** Regardless of the ignore list setting, `_dispatch` always drops messages where the sender username matches `bot_username` (case-insensitive). This prevents the bot's own chat messages from triggering AI responses and is not configurable.
+
 ## Custom `!command` responses (`_route_chat_commands`)
 
 When `chat_commands_enabled` is `True` and a message starts with a registered `!word`, `_route_chat_commands` posts the configured reply to Twitch chat without invoking the AI. Called from `_dispatch` after the ignore check and before `_route_plays`. Commands are stored as `dict[str, str]` in `chat_commands` (keys normalised to lowercase, auto-prefixed with `!`).
@@ -174,7 +176,7 @@ Connection fields are saved to `.env` next to the script whenever the user click
 `.env` is in `.gitignore` — credentials are never committed.
 
 `.env` key names:
-- Twitch: `TWITCH_CHANNEL`, `TWITCH_USERNAME`, `TWITCH_TOKEN`
+- Twitch (broadcaster/EventSub): `TWITCH_CHANNEL`, `TWITCH_USERNAME`, `TWITCH_CLIENT_ID`, `TWITCH_TOKEN`
 - Bot account: `BOT_USERNAME`, `BOT_TOKEN`
 - LLM: `LLM_PROVIDER`, `LLM_ENDPOINT`, `LLM_MODEL`, `LLM_API_KEY`
 - Piper: `PIPER_EXE`, `PIPER_MODEL`, `PIPER_CONFIG`
@@ -234,3 +236,5 @@ System prompts are saved as `.txt` files in `prompts/` (created next to the scri
 - Bot Username: the bot account's Twitch login name (lowercase)
 - Bot OAuth Token: `oauth:xxxxxxxxxxxxxxxx` for the bot account (prefix added automatically if omitted)
 - Broadcaster Username / Broadcaster Token / Client ID: optional — only needed for EventSub follow-event detection
+
+**Migration:** If `BOT_USERNAME`/`BOT_TOKEN` are absent from `.env`, the bot automatically falls back to `TWITCH_USERNAME`/`TWITCH_TOKEN` so existing single-account setups continue working without reconfiguration.
