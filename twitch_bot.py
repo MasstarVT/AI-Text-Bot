@@ -2091,6 +2091,11 @@ class WebApp:
         if ignore_enabled and username.lower() in ignore_list:
             return
 
+        with self._config_lock:
+            bot_username = self._config.get("bot_username", "").lower()
+        if bot_username and username.lower() == bot_username:
+            return
+
         with self._history_lock:
             self._chat_history.append((username, message))
 
@@ -2150,7 +2155,7 @@ class WebApp:
             min_bits         = self._config.get("min_bits",          100)
             trig_points      = self._config.get("trigger_points",    False)
             required_reward  = self._config.get("reward_id",         "")
-            bot_user         = self._config.get("twitch_username",   "").lower()
+            bot_user         = self._config.get("bot_username", "").lower()
             context_enabled  = self._config.get("ai_context_enabled", False)
             context_size     = int(self._config.get("ai_context_size", 5))
 
