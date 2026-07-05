@@ -14,24 +14,25 @@ Set `WEB_PORT=<port>` in `.env` to change the port.
 
 ## Architecture
 
-Single file: `twitch_bot.py`. Five classes plus the app window:
+Single file: `twitch_bot.py`. Seven classes:
 
 | Class | Responsibility |
 |---|---|
 | `WebApp`             | Flask web server, service lifecycle, API routes, SSE log broadcast |
 | `TwitchIRCClient` | Raw TCP socket to `irc.chat.twitch.tv:6667`, PING/PONG, PRIVMSG parsing |
+| `EventSubClient` | Twitch EventSub WebSocket client; subscribes to `channel.follow` and fires `on_event` callbacks |
 | `AIResponseHandler` | Queue-backed worker; POSTs to local LLM (OpenAI-compatible endpoint) |
-| `TTSEngine` | Queue-backed worker; runs Piper subprocess, plays WAV via pygame |
+| `TTSEngine` | Queue-backed worker; runs Piper subprocess, streams WAV via SSE |
 | `GameInputController` | Fire-and-forget key presses via pydirectinput (Windows) or pynput (Linux) |
 | `DiscordClient` | Discord bot on a daemon thread with its own asyncio loop; filters messages by trigger mode and routes them through the shared `AIResponseHandler` |
 
 ## Key design rules
 
-- **No GUI calls from worker threads.** All background → GUI communication goes through `_log_queue` (a `queue.Queue[str]`), drained by `_poll_logs()` via `self.after(80, ...)` on the main thread.
-- `game_input_enabled` and `ai_enabled` are `ctk.BooleanVar`; `.get()` is GIL-safe for reads from any thread.
-- `CTkEntry` / `CTkComboBox` `.get()` calls are also GIL-safe scalar reads from worker threads. **`CTkTextbox.get(index, index)` is not** — it's a Tcl round-trip. Use `_prompt_cache` / `_prompt_lock` instead (updated every 80 ms by `_sync_prompt_cache()` in `_poll_logs`).
-- `get_config` / `get_creds` callables are passed to workers so they always read the latest GUI field values without storing stale snapshots.
-- When reading a shared object reference from a worker thread (e.g. `self._ai`, `self._sock`), **snapshot it to a local variable first** (`ai = self._ai`) before the truthiness check and use. This closes the TOCTOU window where the GUI thread can null the reference between the check and the call.
+- **All mutable state lives in `WebApp._config`**, protected by `_config_lock` (a `threading.Lock`). Worker threads never write directly to `_config` — only `WebApp` methods do so under the lock.
+- `get_config` / `get_creds` callables are passed to workers (`TTSEngine`, `AIResponseHandler`, `TwitchIRCClient`, `EventSubClient`, `DiscordClient`) so they always snapshot the latest config without storing stale references.
+- `game_input_enabled` and `ai_enabled` use `_BoolGetter` (a thin wrapper around a `bool` field in `_config`). `.get()` reads are protected by `_config_lock`.
+- When reading a shared object reference from a worker thread (e.g. `self._ai`, `self._sock`), **snapshot it to a local variable first** (`ai = self._ai`) before the truthiness check and use. This closes the TOCTOU window where the main thread can null the reference between the check and the call.
+- Background threads log via `self._log(msg)` which fans out to all connected SSE clients. No direct writes to the console widget from worker threads.
 
 ## AI trigger logic (`_route_ai`)
 
@@ -50,18 +51,21 @@ Bits and channel-point data come from IRCv3 tags parsed in `TwitchIRCClient._han
 
 When enabled, the bot responds to Twitch channel events with AI-generated thank-you messages.
 
-Supported events (all via USERNOTICE, except bits which come via PRIVMSG):
+Supported events:
 
-| Event | IRC `msg-id` | Config key |
+| Event | Source | Config key |
 |---|---|---|
-| New sub | `sub` | `thanks_sub` |
-| Resub | `resub` | `thanks_resub` |
-| Gifted sub | `subgift` | `thanks_gift` |
-| Mystery gift subs | `submysterygift` | `thanks_mystery` |
-| Bits cheer | PRIVMSG `bits` tag | `thanks_bits` |
-| Raid | `raid` | `thanks_raid` |
+| New follow | EventSub WebSocket (`channel.follow`) | `thanks_follow` |
+| New sub | IRC USERNOTICE `sub` | `thanks_sub` |
+| Resub | IRC USERNOTICE `resub` | `thanks_resub` |
+| Gifted sub | IRC USERNOTICE `subgift` | `thanks_gift` |
+| Mystery gift subs | IRC USERNOTICE `submysterygift` | `thanks_mystery` |
+| Bits cheer | IRC PRIVMSG `bits` tag | `thanks_bits` |
+| Raid | IRC USERNOTICE `raid` | `thanks_raid` |
 
-`TwitchIRCClient.on_event` is set to `TwitchBotApp._handle_event` in `_connect`. Event messages use `_THANKS_TEMPLATES` (module-level constant). The thank-you prompt (`thanks_prompt`) is separate from the main system prompt — falls back to `_DEFAULT_THANKS_PROMPT` if blank.
+IRC events arrive via `TwitchIRCClient.on_event`; follow events arrive via `EventSubClient.on_event`. Both are wired to `WebApp._handle_event` at connect time. Event messages use `_THANKS_TEMPLATES` (module-level constant). The thank-you prompt (`thanks_prompt`) is separate from the main system prompt — falls back to `_DEFAULT_THANKS_PROMPT` if blank.
+
+**EventSub requirements:** Follow events require a Broadcaster Token with `moderator:read:followers` scope and a valid Twitch Client ID. If any of those are missing, `EventSubClient` skips the subscription and logs a warning.
 
 Delivery is independently toggled: `thanks_chat` (post to IRC via `irc.say(channel, reply)`) and `thanks_tts` (passed as `use_tts` to `ai.handle`).
 
@@ -172,7 +176,7 @@ To re-download: `curl -L https://github.com/rhasspy/piper/releases/download/2023
 
 **Auto-connect on startup:** if `DISCORD_TOKEN` and `DISCORD_CHANNEL_ID` are both set in `.env`, `TwitchBotApp.__init__` schedules `_discord_connect` via `self.after(1200, ...)` so the bot connects automatically.
 
-**Discord-specific prompt cache:** `_discord_prompt_cache` / `_discord_prompt_lock` mirror the main `_prompt_cache` / `_prompt_lock` pattern — the prompt textbox is a Tcl widget and cannot be read from a worker thread. The cache is synced in `_poll_logs` alongside the main prompt. When "Use shared AI prompt" is checked, `_get_discord_cfg` returns an empty string (resolved to `None` inside `DiscordClient`, which then falls back to the main system prompt).
+**Discord prompt:** `_get_discord_cfg()` reads from `_config` under `_config_lock`. When "Use shared AI prompt" is checked, it returns an empty string (resolved to `None` inside `DiscordClient`, which then falls back to the main system prompt).
 
 **Status label:** `_lbl_discord_status` in the header bar shows `Discord: ● Off / Connecting… / Online / Error` (column 5, next to the Twitch status label). `_on_ready_cb` / `_on_failure_cb` callbacks update it from the GUI thread via `self.after(0, ...)`.
 
@@ -214,19 +218,27 @@ Changing provider auto-fills the endpoint and calls Refresh on the model dropdow
 
 ## UI layout
 
-The app has no tabs. Layout is:
+The UI is served by Flask at `http://<server-ip>:5000` (`templates/index.html`).
 
-- **Row 0** — `_build_header()`: fixed 48 px header bar with title, Connect/Disconnect buttons, Twitch status label, and Discord status label (`_lbl_discord_status`, column 5).
-- **Row 1** — two-column `CTkFrame`: left = Twitch Plays (`_build_plays`), right = AI Interaction (`_build_ai`).
-- **Row 2** — console label bar + Clear button (`_build_console_section`).
-- **Row 3** — `CTkTextbox` console (height=190, read-only).
-- **Row 4** — footer with ⚙ gear button that calls `_open_settings()`.
-
-Connection Settings live in a `CTkToplevel` (`_settings_win`) built by `_create_settings_window()` — hidden on startup, shown/hidden via `_open_settings()` / `win.withdraw()`. `_build_connection()` populates this window.
+Main page layout:
+- **Header** — Panic (stop TTS), TTS volume slider, Connect / Disconnect (Twitch + Discord), Twitch and Discord status badges.
+- **Left panel** — Twitch Plays: command→key mappings, preset selector, toggle on/off.
+- **Right panel** — AI Interaction: trigger checkboxes (every N, @mentions, bits, channel points), system prompt textarea, prompt save/load.
+- **Console** — live log output streamed via SSE.
+- **Manual input bar** — send a one-off message to the AI.
+- **Settings modal** (⚙ gear button) — tabbed settings popup with tabs:
+  - **Twitch** — channel, broadcaster credentials, bot credentials
+  - **AI** — LLM provider/endpoint/model/key
+  - **Discord** — token, channel ID, trigger mode, prompt
+  - **TTS** — Piper executable, model, config paths
+  - **Thanks** — per-event toggles, cooldown, shared/dedicated prompt
+  - **Ignore** — ignore list toggle and username list
+  - **Commands** — custom `!commands` table, cooldowns, auto-list toggle
+  - **Schedule** — scheduled message entries (text + interval)
 
 ## Saved prompts
 
-System prompts are saved as `.txt` files in `prompts/` (created next to the script on first run). Save/Load buttons are in the AI Interaction panel.
+System prompts are saved as `.txt` files in `prompts/` (created next to the script on first run). Save/Load buttons are in the right panel (AI Interaction) of the web UI.
 
 ## Voices directory
 
