@@ -2146,7 +2146,10 @@ class WebApp:
             return
         entry = commands.get(word)
         if entry:
-            cooldown      = int(entry.get("cooldown", 0))
+            try:
+                cooldown = int(entry.get("cooldown", 0) or 0)
+            except (ValueError, TypeError):
+                cooldown = 0
             cooldown_type = entry.get("cooldown_type", "global")
             if cooldown > 0:
                 now = time.time()
@@ -2165,7 +2168,7 @@ class WebApp:
             args     = message.strip()[len(word):].strip()
             response = _apply_placeholders(response, username, channel, word, args)
             irc = self._irc
-            if irc:
+            if irc and response:
                 irc.say(channel, response[:500])
                 self._log(f"[Commands] {username} → {word}")
         elif word == "!commands" and list_enabled:
