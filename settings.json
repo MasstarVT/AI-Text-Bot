@@ -20,5 +20,13 @@
   "thanks_raid": true,
   "thanks_chat": true,
   "thanks_tts": true,
-  "thanks_prompt": ""
+  "thanks_use_shared_prompt": true,
+  "thanks_prompt": "",
+  "thanks_cooldown_enabled": false,
+  "thanks_cooldown_secs": 30,
+  "ignore_list_enabled": false,
+  "ignore_list": [],
+  "chat_commands_enabled": false,
+  "chat_commands": {},
+  "scheduled_msgs": []
 }

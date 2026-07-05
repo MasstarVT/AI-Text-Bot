@@ -85,11 +85,12 @@ _CLAUDE_MODELS = [
 ]
 
 _DEFAULT_THANKS_PROMPT = (
-    "You are a friendly Twitch streamer's bot. When a viewer subs, resubs, gifts subs, "
+    "You are a friendly Twitch streamer's bot. When a viewer follows, subs, resubs, gifts subs, "
     "cheers bits, or raids, respond with a warm, brief, personalized thank-you message "
     "that fits naturally in Twitch chat. Keep it under two sentences. Do not use hashtags."
 )
 _THANKS_TEMPLATES: dict[str, Callable[[str, dict], str]] = {
+    "follow":      lambda u, e: f"[EVENT] {u} just followed! Welcome them to the community.",
     "sub":         lambda u, e: f"[EVENT] {u} just subscribed! Thank them warmly.",
     "resub":       lambda u, e: (
         f"[EVENT] {u} resubscribed for {e.get('months','?')} months "
@@ -730,6 +731,175 @@ class TwitchIRCClient:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# EventSubClient
+# ══════════════════════════════════════════════════════════════════════════════
+class EventSubClient:
+    """
+    Subscribes to Twitch EventSub `channel.follow` via WebSocket transport.
+
+    Requires the OAuth token to have the `moderator:read:followers` scope and a
+    valid Client ID from a registered Twitch application (dev.twitch.tv).
+
+    Runs on a dedicated daemon thread with its own asyncio event loop, mirroring
+    the DiscordClient pattern.
+    """
+
+    _WS_URL      = "wss://eventsub.wstv.twitch.tv/ws"
+    _HELIX_USERS = "https://api.twitch.tv/helix/users"
+    _HELIX_SUB   = "https://api.twitch.tv/helix/eventsub/subscriptions"
+
+    def __init__(self, get_creds, log, on_event) -> None:
+        self._get_creds = get_creds  # callable → dict(channel, token, client_id)
+        self._log       = log
+        self._on_event  = on_event   # callback(event_type: str, username: str, extra: dict)
+        self._thread: threading.Thread | None = None
+        self._loop:   asyncio.AbstractEventLoop | None = None
+        self._stop    = threading.Event()
+
+    def connect(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="EventSub")
+        self._thread.start()
+
+    def disconnect(self) -> None:
+        self._stop.set()
+        loop = self._loop
+        if loop and not loop.is_closed():
+            loop.call_soon_threadsafe(loop.stop)
+
+    def _run_loop(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        try:
+            self._loop.run_until_complete(self._session())
+        except Exception as exc:
+            self._log(f"[EventSub] Fatal error: {exc}")
+        finally:
+            self._loop.close()
+
+    async def _session(self) -> None:
+        creds     = self._get_creds()
+        raw_token = creds.get("token", "")
+        token     = raw_token.removeprefix("oauth:")
+        client_id = creds.get("client_id", "")
+        channel   = creds.get("channel", "").lower().strip()
+
+        if not token or not client_id or not channel:
+            self._log("[EventSub] Skipping follow events — token, client_id, or channel missing")
+            return
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Client-Id":     client_id,
+            "Content-Type":  "application/json",
+        }
+
+        # Resolve broadcaster user ID once
+        try:
+            async with aiohttp.ClientSession() as http:
+                async with http.get(self._HELIX_USERS, params={"login": channel},
+                                    headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                    data = await r.json()
+            users = data.get("data", [])
+            if not users:
+                self._log(f"[EventSub] Could not resolve user ID for channel '{channel}'")
+                return
+            broadcaster_id = users[0]["id"]
+        except Exception as exc:
+            self._log(f"[EventSub] User lookup failed: {exc}")
+            return
+
+        ws_url   = self._WS_URL
+        attempts = 0
+
+        while not self._stop.is_set():
+            try:
+                async with aiohttp.ClientSession() as http:
+                    async with http.ws_connect(ws_url,
+                                               heartbeat=25,
+                                               timeout=aiohttp.ClientWSTimeout(ws_close=10)) as ws:
+                        attempts = 0
+                        reconnect_to: str | None = None
+                        async for msg in ws:
+                            if self._stop.is_set():
+                                return
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                reconnect_to = await self._handle_msg(
+                                    json.loads(msg.data), http, headers, broadcaster_id
+                                )
+                                if reconnect_to:
+                                    break
+                            elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                                break
+                        if reconnect_to:
+                            ws_url = reconnect_to
+                            continue
+            except Exception as exc:
+                if self._stop.is_set():
+                    return
+                attempts += 1
+                delay = min(2 ** attempts, 120)
+                self._log(f"[EventSub] Disconnected ({exc}), reconnecting in {delay}s…")
+                await asyncio.sleep(delay)
+
+    async def _handle_msg(self, payload: dict, http, headers: dict,
+                          broadcaster_id: str) -> str | None:
+        """Returns a reconnect URL if session_reconnect received, else None."""
+        msg_type = payload.get("metadata", {}).get("message_type", "")
+
+        if msg_type == "session_welcome":
+            session_id = payload["payload"]["session"]["id"]
+            self._log("[EventSub] Connected — subscribing to channel.follow")
+            await self._subscribe(http, headers, broadcaster_id, session_id)
+
+        elif msg_type == "notification":
+            p    = payload.get("payload", {})
+            kind = p.get("subscription", {}).get("type", "")
+            if kind == "channel.follow":
+                username = p.get("event", {}).get("user_name", "")
+                if username:
+                    self._on_event("follow", username, {})
+
+        elif msg_type == "session_reconnect":
+            return payload["payload"]["session"].get("reconnect_url", self._WS_URL)
+
+        return None
+
+    async def _subscribe(self, http, headers: dict,
+                         broadcaster_id: str, session_id: str) -> None:
+        body = {
+            "type":    "channel.follow",
+            "version": "2",
+            "condition": {
+                "broadcaster_user_id": broadcaster_id,
+                "moderator_user_id":   broadcaster_id,
+            },
+            "transport": {"method": "websocket", "session_id": session_id},
+        }
+        try:
+            async with http.post(self._HELIX_SUB, json=body,
+                                 headers=headers,
+                                 timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status == 202:
+                    self._log("[EventSub] Subscribed — follow events active")
+                else:
+                    resp_body = await r.json()
+                    msg = resp_body.get("message", str(r.status))
+                    if r.status == 403:
+                        self._log(
+                            f"[EventSub] Subscription failed (403): {msg} — "
+                            "token needs 'moderator:read:followers' scope. "
+                            "Generate a new token at https://twitchtokengenerator.com "
+                            "and add that scope."
+                        )
+                    else:
+                        self._log(f"[EventSub] Subscription failed ({r.status}): {msg}")
+        except Exception as exc:
+            self._log(f"[EventSub] Subscription request error: {exc}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # DiscordClient
 # ══════════════════════════════════════════════════════════════════════════════
 class DiscordClient:
@@ -926,6 +1096,7 @@ class WebApp:
         "last_prompt":       "",
         # ── thank-you responses ────────────────────────────────────────────────
         "thanks_enabled": False,
+        "thanks_follow":  True,
         "thanks_sub":     True,
         "thanks_resub":   True,
         "thanks_gift":    True,
@@ -1005,6 +1176,7 @@ class WebApp:
             "command_map":      dict(settings.get("command_map", {})),
             "last_prompt":      settings.get("last_prompt",      ""),
             "thanks_enabled":   settings.get("thanks_enabled",  False),
+            "thanks_follow":    settings.get("thanks_follow",    True),
             "thanks_sub":       settings.get("thanks_sub",       True),
             "thanks_resub":     settings.get("thanks_resub",     True),
             "thanks_gift":      settings.get("thanks_gift",      True),
@@ -1053,10 +1225,11 @@ class WebApp:
         self._sse_clients: list[queue.Queue]    = []
 
         # Service handles
-        self._irc:     TwitchIRCClient | None   = None
-        self._tts:     TTSEngine | None         = None
-        self._ai:      AIResponseHandler | None = None
-        self._discord: DiscordClient | None     = None
+        self._irc:      TwitchIRCClient | None   = None
+        self._tts:      TTSEngine | None         = None
+        self._ai:       AIResponseHandler | None = None
+        self._discord:  DiscordClient | None     = None
+        self._eventsub: EventSubClient | None    = None
 
         # Flask app
         self._flask = _flask.Flask(
@@ -1191,6 +1364,14 @@ class WebApp:
                 "token":    self._config.get("twitch_token",    ""),
             }
 
+    def _get_eventsub_creds(self) -> dict:
+        with self._config_lock:
+            return {
+                "channel":   self._config.get("twitch_channel",   ""),
+                "token":     self._config.get("twitch_token",     ""),
+                "client_id": self._config.get("twitch_client_id", ""),
+            }
+
     def _get_discord_cfg(self) -> dict:
         with self._config_lock:
             use_shared     = self._config.get("discord_use_shared_prompt", True)
@@ -1274,6 +1455,7 @@ class WebApp:
             "last_prompt":      c.get("last_prompt",      ""),
             # ── thank-you responses ────────────────────────────────────────
             "thanks_enabled":   c.get("thanks_enabled",   False),
+            "thanks_follow":    c.get("thanks_follow",    True),
             "thanks_sub":       c.get("thanks_sub",       True),
             "thanks_resub":     c.get("thanks_resub",     True),
             "thanks_gift":      c.get("thanks_gift",      True),
@@ -1485,7 +1667,7 @@ class WebApp:
             "trigger_every_n", "every_n", "trigger_mentions", "trigger_bits",
             "min_bits", "trigger_points", "reward_id", "tts_ai",
             # ── thank-you responses ──────────────────────────────────────────
-            "thanks_enabled", "thanks_sub", "thanks_resub", "thanks_gift",
+            "thanks_enabled", "thanks_follow", "thanks_sub", "thanks_resub", "thanks_gift",
             "thanks_mystery", "thanks_bits", "thanks_raid", "thanks_chat", "thanks_tts",
             "thanks_use_shared_prompt", "thanks_prompt",
             "thanks_cooldown_enabled", "thanks_cooldown_secs",
@@ -1508,7 +1690,7 @@ class WebApp:
             _BOOL_KEYS = {
                 "trigger_every_n", "trigger_mentions", "trigger_bits",
                 "trigger_points", "tts_ai", "discord_use_shared_prompt",
-                "thanks_enabled", "thanks_sub", "thanks_resub", "thanks_gift",
+                "thanks_enabled", "thanks_follow", "thanks_sub", "thanks_resub", "thanks_gift",
                 "thanks_mystery", "thanks_bits", "thanks_raid", "thanks_chat", "thanks_tts",
                 "thanks_use_shared_prompt",
                 "thanks_cooldown_enabled",
@@ -1763,9 +1945,14 @@ class WebApp:
         if irc:
             irc.disconnect()
             self._irc = None
+        es = self._eventsub
+        if es:
+            es.disconnect()
+            self._eventsub = None
         self._save_env()
         with self._config_lock:
             self._config["twitch_status"] = "connecting"
+            has_client_id = bool(self._config.get("twitch_client_id", "").strip())
         self._broadcast_status()
         self._irc = TwitchIRCClient(
             get_creds=self._get_irc_creds,
@@ -1777,12 +1964,25 @@ class WebApp:
         )
         self._irc.connect()
         self._log("[System] Connecting to Twitch IRC…")
+        if has_client_id:
+            self._eventsub = EventSubClient(
+                get_creds=self._get_eventsub_creds,
+                log=self._log,
+                on_event=self._handle_event,
+            )
+            self._eventsub.connect()
+        else:
+            self._log("[EventSub] No Client ID set — follow events disabled")
 
     def _disconnect(self) -> None:
         irc = self._irc
         if irc:
             irc.disconnect()
             self._irc = None
+        es = self._eventsub
+        if es:
+            es.disconnect()
+            self._eventsub = None
         with self._config_lock:
             self._config["twitch_status"] = "off"
         self._broadcast_status()
@@ -1969,6 +2169,7 @@ class WebApp:
                     and username.lower() in self._config.get("ignore_list", [])):
                 return
             event_map = {
+                "follow":      self._config.get("thanks_follow",  True),
                 "sub":         self._config.get("thanks_sub",     True),
                 "resub":       self._config.get("thanks_resub",   True),
                 "subgift":     self._config.get("thanks_gift",    True),

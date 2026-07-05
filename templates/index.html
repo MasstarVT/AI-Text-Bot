@@ -370,6 +370,7 @@ textarea{resize:vertical;font-family:var(--mono)}
         <div class="divider"></div>
         <div class="section-lbl">Events</div>
         <div class="two-col">
+          <label class="row-check"><input type="checkbox" id="s-thanks-follow"> Follow</label>
           <label class="row-check"><input type="checkbox" id="s-thanks-sub"> New sub</label>
           <label class="row-check"><input type="checkbox" id="s-thanks-resub"> Resub</label>
           <label class="row-check"><input type="checkbox" id="s-thanks-gift"> Gifted sub</label>
@@ -377,6 +378,7 @@ textarea{resize:vertical;font-family:var(--mono)}
           <label class="row-check"><input type="checkbox" id="s-thanks-bits"> Bits cheer</label>
           <label class="row-check"><input type="checkbox" id="s-thanks-raid"> Raid</label>
         </div>
+        <div class="hint" style="margin-top:4px">Follow requires a Client ID and a token with <code>moderator:read:followers</code> scope.</div>
 
         <div class="divider"></div>
         <div class="section-lbl">Delivery</div>
@@ -896,6 +898,7 @@ function openSettings() {
     el('s-piper-cfg').value         = s.piper_config      || '';
     toggleDiscordPrompt();
     el('s-thanks-enabled').checked  = !!s.thanks_enabled;
+    el('s-thanks-follow').checked   = (s.thanks_follow !== false);
     el('s-thanks-sub').checked      = (s.thanks_sub !== false);
     el('s-thanks-resub').checked    = (s.thanks_resub !== false);
     el('s-thanks-gift').checked     = (s.thanks_gift !== false);
@@ -967,6 +970,7 @@ function saveSettings() {
     discord_use_shared_prompt:el('s-discord-shared').checked,
     discord_prompt:           el('s-discord-prompt').value,
     thanks_enabled:            el('s-thanks-enabled').checked,
+    thanks_follow:             el('s-thanks-follow').checked,
     thanks_sub:                el('s-thanks-sub').checked,
     thanks_resub:              el('s-thanks-resub').checked,
     thanks_gift:               el('s-thanks-gift').checked,
