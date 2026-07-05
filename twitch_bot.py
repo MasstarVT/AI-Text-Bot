@@ -2096,6 +2096,8 @@ class WebApp:
         response = commands.get(word)
         if not response:
             return
+        args = message.strip()[len(word):].strip()
+        response = _apply_placeholders(response, username, channel, word, args)
         irc = self._irc
         if irc:
             irc.say(channel, response[:500])
