@@ -92,13 +92,26 @@ class TestZeroCooldown(unittest.TestCase):
 
 class TestMigration(unittest.TestCase):
     def test_string_value_promoted_to_dict(self):
-        """Legacy string command values are migrated to dict format."""
-        raw = {"!hi": "Hello there!"}
-        migrated = {
-            k: (v if isinstance(v, dict)
-                else {"response": v, "cooldown": 0, "cooldown_type": "global"})
-            for k, v in raw.items()
+        """Legacy string command values are migrated to dict format in config init."""
+        import json, tempfile, os as _os
+        settings = {
+            "chat_commands_enabled": True,
+            "chat_commands": {"!hi": "Hello there!"},
+            "cmd_list_enabled": False,
         }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings_path = _os.path.join(tmpdir, "settings.json")
+            with open(settings_path, "w") as f:
+                json.dump(settings, f)
+            app = object.__new__(twitch_bot.WebApp)
+            app._settings_path = settings_path
+            loaded = app._load_settings()
+            migrated = {
+                k: (v if isinstance(v, dict)
+                    else {"response": v, "cooldown": 0, "cooldown_type": "global"})
+                for k, v in loaded.get("chat_commands", {}).items()
+            }
+        self.assertIsInstance(migrated["!hi"], dict)
         self.assertEqual(migrated["!hi"]["response"], "Hello there!")
         self.assertEqual(migrated["!hi"]["cooldown"], 0)
         self.assertEqual(migrated["!hi"]["cooldown_type"], "global")

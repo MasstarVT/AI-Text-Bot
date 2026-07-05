@@ -2125,9 +2125,10 @@ class WebApp:
         word = message.strip().split()[0].lower() if message.strip() else ""
         if not word.startswith("!"):
             return
-        response = commands.get(word)
-        if not response:
+        entry = commands.get(word)
+        if not entry:
             return
+        response = entry.get("response", "") if isinstance(entry, dict) else str(entry)
         args = message.strip()[len(word):].strip()
         response = _apply_placeholders(response, username, channel, word, args)
         irc = self._irc
