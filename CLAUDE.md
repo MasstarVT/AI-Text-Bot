@@ -81,7 +81,17 @@ Config keys: `ignore_list_enabled` (bool), `ignore_list` (list of lowercase stri
 
 ## Custom `!command` responses (`_route_chat_commands`)
 
-When `chat_commands_enabled` is `True` and a message starts with a registered `!word`, `_route_chat_commands` posts the configured reply to Twitch chat without invoking the AI. Called from `_dispatch` after the ignore check and before `_route_plays`. Commands are stored as `dict[str, str]` in `chat_commands` (keys normalised to lowercase, auto-prefixed with `!`).
+When `chat_commands_enabled` is `True` and a message starts with a registered `!word`, `_route_chat_commands` posts the configured reply to Twitch chat without invoking the AI. Called from `_dispatch` after the ignore check and before `_route_plays`. Commands are stored as `dict[str, dict]` in `chat_commands` (keys normalised to lowercase, auto-prefixed with `!`).
+
+Each command entry has three fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `response` | `str` | Reply text; placeholder substitution applied; truncated to 500 chars |
+| `cooldown` | `int` | Seconds between allowed uses; `0` = no cooldown |
+| `cooldown_type` | `str` | `"global"` (channel-wide timer) or `"user"` (per-viewer timer) |
+
+**Migration:** Settings saved with the old `dict[str, str]` format are promoted on load: `"Hey!"` → `{"response": "Hey!", "cooldown": 0, "cooldown_type": "global"}`.
 
 Response strings support placeholder substitution via `_apply_placeholders` (module-level, `twitch_bot.py`):
 
@@ -93,6 +103,10 @@ Response strings support placeholder substitution via `_apply_placeholders` (mod
 | `%args%` | Everything after the command word; empty string if nothing |
 
 Unknown placeholders (e.g. `%usr%`) are left as-is. Responses are truncated to 500 chars **after** substitution. See `Placeholder.md` in the repo root for user-facing docs.
+
+**Cooldown tracking:** Two in-memory dicts on `WebApp` — `_cmd_global_cooldowns: dict[str, float]` and `_cmd_user_cooldowns: dict[tuple[str, str], float]` — store last-fired timestamps. These are never persisted; they reset on bot restart.
+
+**Auto `!commands` list (`cmd_list_enabled`):** When enabled, `_route_chat_commands` responds to `!commands` with an alphabetically sorted, comma-separated list of all registered commands prefixed with `"Commands: "`, truncated to 500 chars. A user-defined `!commands` entry always takes priority.
 
 **Note:** If an AI trigger (e.g. every-N counter) fires on the same message as a command match, both responses go to chat. This is by design — the two systems are independent.
 

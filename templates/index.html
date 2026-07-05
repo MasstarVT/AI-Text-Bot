@@ -447,12 +447,20 @@ textarea{resize:vertical;font-family:var(--mono)}
             <tr>
               <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Command</th>
               <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Response</th>
+              <th style="padding:4px 6px;font-size:11px;color:var(--muted);text-align:center">Cooldown (s)</th>
+              <th style="padding:4px 6px;font-size:11px;color:var(--muted);text-align:center">Mode</th>
               <th style="width:32px"></th>
             </tr>
           </thead>
           <tbody id="cmd-rows"></tbody>
         </table>
         <button class="btn btn-neutral btn-sm" onclick="addCmdRow()">+ Add command</button>
+        <div class="divider"></div>
+        <label class="row-check">
+          <input type="checkbox" id="s-cmd-list-enabled">
+          Enable !commands list
+        </label>
+        <div class="hint">Viewers can type !commands to see all registered commands. A user-defined !commands entry takes priority.</div>
       </div>
 
       <!-- Schedule tab -->
@@ -926,9 +934,10 @@ function openSettings() {
     toggleThanksCooldown();
     el('s-ignore-enabled').checked = !!s.ignore_list_enabled;
     el('s-ignore-list').value      = (s.ignore_list || []).join('\n');
-    el('s-cmd-enabled').checked = !!s.chat_commands_enabled;
+    el('s-cmd-enabled').checked      = !!s.chat_commands_enabled;
+    el('s-cmd-list-enabled').checked = !!s.cmd_list_enabled;
     el('cmd-rows').innerHTML = '';
-    Object.entries(s.chat_commands || {}).forEach(([cmd, resp]) => addCmdRow(cmd, resp));
+    Object.entries(s.chat_commands || {}).forEach(([cmd, entry]) => addCmdRow(cmd, entry));
     el('sched-rows').innerHTML = '';
     (s.scheduled_msgs || []).forEach(e => addSchedRow(e.text, e.interval));
     el('s-ctx-enabled').checked = !!s.ai_context_enabled;
@@ -1000,6 +1009,7 @@ function saveSettings() {
     ignore_list:         el('s-ignore-list').value.split('\n').map(u => u.trim().toLowerCase()).filter(Boolean),
     chat_commands_enabled: el('s-cmd-enabled').checked,
     chat_commands:         getChatCommands(),
+    cmd_list_enabled:      el('s-cmd-list-enabled').checked,
     scheduled_msgs: getSchedMsgs(),
     ai_context_enabled: el('s-ctx-enabled').checked,
     ai_context_size:    parseInt(el('s-ctx-size').value) || 5,
@@ -1060,12 +1070,22 @@ function getOAuthUrl() {
   closeSettings();
 }
 
-function addCmdRow(cmd, resp) {
-  const tbody = el('cmd-rows');
-  const tr = document.createElement('tr');
+function addCmdRow(cmd, entry) {
+  const tbody    = el('cmd-rows');
+  const tr       = document.createElement('tr');
+  const resp     = (entry && typeof entry === 'object') ? (entry.response    || '') : (entry || '');
+  const cooldown = (entry && typeof entry === 'object') ? (entry.cooldown    ?? 0)  : 0;
+  const cdType   = (entry && typeof entry === 'object') ? (entry.cooldown_type || 'global') : 'global';
   tr.innerHTML = `
     <td style="padding:2px 4px"><input type="text" placeholder="!hello" style="width:100%" value="${escHtml(cmd||'')}"></td>
-    <td style="padding:2px 4px"><input type="text" placeholder="Hey there!" style="width:100%" value="${escHtml(resp||'')}"></td>
+    <td style="padding:2px 4px"><input type="text" placeholder="Hey there!" style="width:100%" value="${escHtml(resp)}"></td>
+    <td style="padding:2px 4px;text-align:center"><input type="number" min="0" style="width:60px" value="${parseInt(cooldown)||0}"></td>
+    <td style="padding:2px 4px;text-align:center">
+      <select>
+        <option value="global"${cdType==='global'?' selected':''}>Global</option>
+        <option value="user"${cdType==='user'?' selected':''}>Per-user</option>
+      </select>
+    </td>
     <td style="padding:2px 4px;text-align:center"><button class="btn-icon" onclick="this.closest('tr').remove()">✕</button></td>
   `;
   tbody.appendChild(tr);
@@ -1078,10 +1098,13 @@ function escHtml(s) {
 function getChatCommands() {
   const cmds = {};
   el('cmd-rows').querySelectorAll('tr').forEach(tr => {
-    const inputs = tr.querySelectorAll('input');
-    const cmd  = inputs[0].value.trim().toLowerCase();
-    const resp = inputs[1].value.trim();
-    if (cmd && resp) cmds[cmd] = resp;
+    const inputs   = tr.querySelectorAll('input');
+    const sel      = tr.querySelector('select');
+    const cmd      = inputs[0].value.trim().toLowerCase();
+    const resp     = inputs[1].value.trim();
+    const cooldown = parseInt(inputs[2].value) || 0;
+    const cdType   = sel ? sel.value : 'global';
+    if (cmd && resp) cmds[cmd] = {response: resp, cooldown: cooldown, cooldown_type: cdType};
   });
   return cmds;
 }
