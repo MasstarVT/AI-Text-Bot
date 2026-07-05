@@ -175,6 +175,7 @@ Connection fields are saved to `.env` next to the script whenever the user click
 
 `.env` key names:
 - Twitch: `TWITCH_CHANNEL`, `TWITCH_USERNAME`, `TWITCH_TOKEN`
+- Bot account: `BOT_USERNAME`, `BOT_TOKEN`
 - LLM: `LLM_PROVIDER`, `LLM_ENDPOINT`, `LLM_MODEL`, `LLM_API_KEY`
 - Piper: `PIPER_EXE`, `PIPER_MODEL`, `PIPER_CONFIG`
 - Discord: `DISCORD_TOKEN`, `DISCORD_CHANNEL_ID`, `DISCORD_TRIGGER`, `DISCORD_USE_SHARED_PROMPT`, `DISCORD_PROMPT`
@@ -229,6 +230,7 @@ System prompts are saved as `.txt` files in `prompts/` (created next to the scri
 
 ## IRC credential format
 
-- Channel: plain name, no `#`
-- Username: bot account name (lowercase)
-- Token: `oauth:xxxxxxxxxxxxxxxx` (prefix added automatically if omitted)
+- Channel: plain name, no `#` — the channel the bot joins
+- Bot Username: the bot account's Twitch login name (lowercase)
+- Bot OAuth Token: `oauth:xxxxxxxxxxxxxxxx` for the bot account (prefix added automatically if omitted)
+- Broadcaster Username / Broadcaster Token / Client ID: optional — only needed for EventSub follow-event detection
