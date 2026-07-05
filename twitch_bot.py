@@ -102,6 +102,18 @@ _THANKS_TEMPLATES: dict[str, Callable[[str, dict], str]] = {
     "bits":        lambda u, e: f"[EVENT] {u} cheered {e.get('bits','?')} bits! Thank them.",
 }
 
+_PLACEHOLDER_RE = re.compile(r"%user%|%channel%|%command%|%args%")
+
+def _apply_placeholders(response: str, username: str, channel: str, command: str, args: str) -> str:
+    placeholders = {
+        "%user%":    username,
+        "%channel%": channel,
+        "%command%": command,
+        "%args%":    args,
+    }
+    return _PLACEHOLDER_RE.sub(lambda m: placeholders.get(m.group(0), m.group(0)), response)
+
+
 def _scan_voices_dir(voices_dir: str) -> list[str]:
     """Return sorted .onnx voice names (without extension) from voices_dir."""
     try:
