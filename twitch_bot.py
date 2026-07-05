@@ -1738,6 +1738,8 @@ class WebApp:
                                 cmds = {}
                                 for cmd, entry in data[k].items():
                                     cmd = str(cmd).lower().strip()
+                                    if not cmd:
+                                        continue
                                     if not cmd.startswith("!"):
                                         cmd = "!" + cmd
                                     if isinstance(entry, dict):
