@@ -1158,6 +1158,8 @@ class WebApp:
             "twitch_username":         env.get("TWITCH_USERNAME", ""),
             "twitch_client_id":        env.get("TWITCH_CLIENT_ID", ""),
             "twitch_token":            env.get("TWITCH_TOKEN", ""),
+            "bot_username":            env.get("BOT_USERNAME", "") or env.get("TWITCH_USERNAME", ""),
+            "bot_token":               env.get("BOT_TOKEN",    "") or env.get("TWITCH_TOKEN",    ""),
             "llm_provider":            env.get("LLM_PROVIDER", "Ollama"),
             "llm_endpoint":            env.get("LLM_ENDPOINT",
                                                "http://localhost:11434/v1/chat/completions"),
@@ -1420,6 +1422,8 @@ class WebApp:
             f"TWITCH_USERNAME={c.get('twitch_username', '')}",
             f"TWITCH_CLIENT_ID={c.get('twitch_client_id', '')}",
             f"TWITCH_TOKEN={c.get('twitch_token', '')}",
+            f"BOT_USERNAME={c.get('bot_username', '')}",
+            f"BOT_TOKEN={c.get('bot_token', '')}",
             f"LLM_PROVIDER={c.get('llm_provider', 'Ollama')}",
             f"LLM_ENDPOINT={c.get('llm_endpoint', '')}",
             f"LLM_MODEL={c.get('llm_model', '')}",
@@ -1582,7 +1586,8 @@ class WebApp:
             if data:
                 with self._config_lock:
                     for k in ("twitch_channel", "twitch_username",
-                               "twitch_client_id", "twitch_token"):
+                               "twitch_client_id", "twitch_token",
+                               "bot_username", "bot_token"):
                         if k in data:
                             self._config[k] = data[k]
             self._connect()
@@ -1672,6 +1677,7 @@ class WebApp:
 
         _SETTINGS_KEYS = (
             "twitch_channel", "twitch_username", "twitch_client_id", "twitch_token",
+            "bot_username", "bot_token",
             "llm_provider", "llm_endpoint", "llm_model", "llm_api_key",
             "piper_exe", "piper_model", "piper_config",
             "discord_token", "discord_channel_id", "discord_trigger",
