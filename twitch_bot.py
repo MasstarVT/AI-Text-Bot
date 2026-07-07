@@ -2183,14 +2183,14 @@ class WebApp:
         def api_roles_remove_member(role: str, user: str):
             path = os.path.join(self._data_dir, "roles.json")
             with self._roles_lock:
-                data = {}
-                if os.path.exists(path):
-                    with open(path, encoding="utf-8") as f:
-                        data = json.load(f)
+                if not os.path.exists(path):
+                    return _flask.jsonify({"ok": True})
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
                 if role in data:
                     data[role] = [m for m in data[role] if m != user.lower()]
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
+                    with open(path, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2)
             return _flask.jsonify({"ok": True})
 
         # ── counters ───────────────────────────────────────────────────────────
@@ -2259,13 +2259,14 @@ class WebApp:
         def api_counters_delete(name: str):
             path = os.path.join(self._data_dir, "counters.json")
             with self._counters_lock:
-                data = {}
-                if os.path.exists(path):
-                    with open(path, encoding="utf-8") as f:
-                        data = json.load(f)
-                data.pop(name, None)
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
+                if not os.path.exists(path):
+                    return _flask.jsonify({"ok": True})
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                if name in data:
+                    del data[name]
+                    with open(path, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2)
             return _flask.jsonify({"ok": True})
 
         # ── quotes ─────────────────────────────────────────────────────────────
@@ -2293,13 +2294,14 @@ class WebApp:
         def api_quotes_delete(quote_id: int):
             path = os.path.join(self._data_dir, "quotes.json")
             with self._quotes_lock:
-                quotes = []
-                if os.path.exists(path):
-                    with open(path, encoding="utf-8") as f:
-                        quotes = json.load(f)
-                quotes = [q for q in quotes if q["id"] != quote_id]
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(quotes, f, indent=2)
+                if not os.path.exists(path):
+                    return _flask.jsonify({"ok": True})
+                with open(path, encoding="utf-8") as f:
+                    quotes = json.load(f)
+                filtered = [q for q in quotes if q.get("id") != quote_id]
+                if len(filtered) < len(quotes):
+                    with open(path, "w", encoding="utf-8") as f:
+                        json.dump(filtered, f, indent=2)
             return _flask.jsonify({"ok": True})
 
         # ── file browser ──────────────────────────────────────────────────────
