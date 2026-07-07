@@ -24,6 +24,10 @@ def _make_app(commands: dict, cmd_list_enabled: bool = False) -> twitch_bot.WebA
     app._log = lambda msg: None
     app._cmd_global_cooldowns = {}
     app._cmd_user_cooldowns   = {}
+    app._cmd_use_counts       = {}
+    app._data_dir             = os.path.join(os.path.dirname(__file__), "..", "data")
+    app._stream_cache         = {}
+    app._stream_cache_ts      = 0.0
     return app
 
 

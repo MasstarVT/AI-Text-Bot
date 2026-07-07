@@ -1345,6 +1345,10 @@ class WebApp:
         self._thanks_lock = threading.Lock()
         self._cmd_global_cooldowns: dict[str, float]             = {}
         self._cmd_user_cooldowns:   dict[tuple[str, str], float] = {}
+        self._cmd_use_counts:   dict[str, int]  = {}
+        self._data_dir          = os.path.join(_here, "data")
+        self._stream_cache:     dict             = {}
+        self._stream_cache_ts:  float            = 0.0
 
         # Load last-used prompt content from file
         last = self._config["last_prompt"]
@@ -2249,6 +2253,36 @@ class WebApp:
         if bits > 0:
             self._handle_event("bits", username, {"bits": bits})
 
+    def _fetch_stream_info(self) -> dict:
+        with self._config_lock:
+            if time.time() - self._stream_cache_ts < 60:
+                return dict(self._stream_cache)
+            channel   = self._config.get("twitch_channel", "")
+            client_id = self._config.get("twitch_client_id", "")
+            token     = (self._config.get("twitch_token", "")
+                         or self._config.get("bot_token", ""))
+        if not channel or not client_id or not token:
+            return {}
+        try:
+            resp = requests.get(
+                "https://api.twitch.tv/helix/streams",
+                params={"user_login": channel},
+                headers={
+                    "Client-ID": client_id,
+                    "Authorization": f"Bearer {token.removeprefix('oauth:')}",
+                },
+                timeout=5,
+            )
+            data   = resp.json().get("data", [])
+            result = data[0] if data else {}
+        except Exception as exc:
+            self._log(f"[StreamInfo] Fetch failed: {exc}")
+            result = {}
+        with self._config_lock:
+            self._stream_cache    = result
+            self._stream_cache_ts = time.time()
+        return dict(result)
+
     def _route_chat_commands(self, username: str, message: str) -> None:
         with self._config_lock:
             enabled      = self._config.get("chat_commands_enabled", False)
@@ -2282,7 +2316,13 @@ class WebApp:
                     self._cmd_global_cooldowns[word] = now
             response = entry.get("response", "")
             args     = message.strip()[len(word):].strip()
-            response = _apply_placeholders(response, username, channel, word, args)
+            self._cmd_use_counts[word] = self._cmd_use_counts.get(word, 0) + 1
+            count       = self._cmd_use_counts[word]
+            stream_info = self._fetch_stream_info()
+            response    = _apply_placeholders(
+                response, username, channel, word, args,
+                count, stream_info, self._data_dir,
+            )
             irc = self._irc
             if irc and response:
                 irc.say(channel, response[:500])
