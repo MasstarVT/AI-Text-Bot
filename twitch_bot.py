@@ -1327,8 +1327,11 @@ class WebApp:
             "ignore_list":         [str(u).lower().strip() for u in settings.get("ignore_list", []) if u],
             "chat_commands_enabled": settings.get("chat_commands_enabled", False),
             "chat_commands": {
-                k: (v if isinstance(v, dict)
-                    else {"response": v, "cooldown": 0, "cooldown_type": "global"})
+                k: (
+                    {**v, "allowed_roles": v.get("allowed_roles", [])}
+                    if isinstance(v, dict)
+                    else {"response": v, "cooldown": 0, "cooldown_type": "global", "allowed_roles": []}
+                )
                 for k, v in settings.get("chat_commands", {}).items()
             },
             "cmd_list_enabled": settings.get("cmd_list_enabled", False),
@@ -1883,13 +1886,20 @@ class WebApp:
                                         cooldown_type = str(entry.get("cooldown_type", "global"))
                                         if cooldown_type not in ("global", "user"):
                                             cooldown_type = "global"
+                                        raw_roles = entry.get("allowed_roles", [])
+                                        if isinstance(raw_roles, list):
+                                            allowed_roles = [str(r).strip().lower() for r in raw_roles if r]
+                                        elif isinstance(raw_roles, str) and raw_roles.strip():
+                                            allowed_roles = [r.strip().lower() for r in raw_roles.split(",") if r.strip()]
+                                        else:
+                                            allowed_roles = []
                                         cmds[cmd] = {"response": response, "cooldown": cooldown,
-                                                     "cooldown_type": cooldown_type}
+                                                     "cooldown_type": cooldown_type, "allowed_roles": allowed_roles}
                                     else:
                                         resp = str(entry).strip()
                                         if cmd and resp:
                                             cmds[cmd] = {"response": resp, "cooldown": 0,
-                                                         "cooldown_type": "global"}
+                                                         "cooldown_type": "global", "allowed_roles": []}
                                 self._config[k] = cmds
                         elif k == "scheduled_msgs":
                             if isinstance(data[k], list):
@@ -2457,7 +2467,7 @@ class WebApp:
         handled = handled or self._route_counters(username, message, user_roles)
         handled = handled or self._route_quotes(username, message, user_roles)
         if not handled:
-            self._route_chat_commands(username, message)
+            self._route_chat_commands(username, message, user_roles)
         self._route_plays(username, message)
         self._route_ai(username, message, bits, reward_id)
         if bits > 0:
@@ -2494,7 +2504,8 @@ class WebApp:
             self._stream_cache_ts = time.time()
         return dict(result)
 
-    def _route_chat_commands(self, username: str, message: str) -> None:
+    def _route_chat_commands(self, username: str, message: str,
+                             user_roles: "set[str] | None" = None) -> None:
         with self._config_lock:
             enabled      = self._config.get("chat_commands_enabled", False)
             commands     = dict(self._config.get("chat_commands", {}))
@@ -2507,6 +2518,9 @@ class WebApp:
             return
         entry = commands.get(word)
         if entry:
+            allowed = entry.get("allowed_roles", [])
+            if allowed and user_roles is not None and not (user_roles & set(allowed)):
+                return
             try:
                 cooldown = int(entry.get("cooldown", 0) or 0)
             except (ValueError, TypeError):
