@@ -2052,6 +2052,64 @@ class WebApp:
             voices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Voices")
             return _flask.jsonify({"voices": _scan_voices_dir(voices_dir)})
 
+        # ── data files ───────────────────────────────────────────────────────
+
+        @app.route("/api/datafiles")
+        def api_datafiles_list():
+            os.makedirs(self._data_dir, exist_ok=True)
+            try:
+                files = sorted(
+                    [{"name": e.name, "size": e.stat().st_size}
+                     for e in os.scandir(self._data_dir)
+                     if e.is_file() and _DATA_NAME_RE.fullmatch(e.name)],
+                    key=lambda x: x["name"],
+                )
+            except Exception:
+                files = []
+            return _flask.jsonify({"files": files})
+
+        @app.route("/api/datafiles/<name>", methods=["GET"])
+        def api_datafile_read(name: str):
+            path = _safe_data_path(self._data_dir, name)
+            if path is None:
+                return _flask.jsonify({"error": "invalid name"}), 400
+            try:
+                with open(path, encoding="utf-8") as f:
+                    content = f.read()
+            except FileNotFoundError:
+                return _flask.jsonify({"error": "not found"}), 404
+            except Exception:
+                return _flask.jsonify({"error": "read error"}), 500
+            return _flask.jsonify({"name": name, "content": content})
+
+        @app.route("/api/datafiles/<name>", methods=["POST"])
+        def api_datafile_save(name: str):
+            path = _safe_data_path(self._data_dir, name)
+            if path is None:
+                return _flask.jsonify({"error": "invalid name"}), 400
+            data    = _flask.request.get_json(force=True, silent=True) or {}
+            content = data.get("content", "")
+            os.makedirs(self._data_dir, exist_ok=True)
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+            except Exception as exc:
+                return _flask.jsonify({"error": str(exc)}), 500
+            return _flask.jsonify({"ok": True, "name": name})
+
+        @app.route("/api/datafiles/<name>", methods=["DELETE"])
+        def api_datafile_delete(name: str):
+            path = _safe_data_path(self._data_dir, name)
+            if path is None:
+                return _flask.jsonify({"error": "invalid name"}), 400
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                return _flask.jsonify({"error": "not found"}), 404
+            except Exception as exc:
+                return _flask.jsonify({"error": str(exc)}), 500
+            return _flask.jsonify({"ok": True})
+
         # ── file browser ──────────────────────────────────────────────────────
 
         @app.route("/api/browse")
