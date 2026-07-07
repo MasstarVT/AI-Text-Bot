@@ -2428,8 +2428,108 @@ class WebApp:
         return True
 
     def _route_counters(self, username: str, message: str, user_roles: set) -> bool:
-        """Stub — implemented in Task 3. Returns False (not handled)."""
-        return False
+        parts = message.strip().split()
+        if not parts:
+            return False
+        word = parts[0].lower()
+        if not word.startswith("!"):
+            return False
+
+        with self._config_lock:
+            channel = self._config.get("twitch_channel", "").lower().strip()
+        irc = self._irc
+        path = os.path.join(self._data_dir, "counters.json")
+
+        # ── management commands ────────────────────────────────────────────────
+        if word == "!addcounter":
+            if not (user_roles & {"moderator", "broadcaster"}) or len(parts) < 2:
+                return True
+            name = parts[1].lower()
+            with self._counters_lock:
+                os.makedirs(self._data_dir, exist_ok=True)
+                counters: dict = {}
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        counters = json.load(f)
+                if name not in counters:
+                    counters[name] = {
+                        "value": 0,
+                        "display": f"{name.title()}: {{value}}",
+                        "edit_roles": ["moderator", "broadcaster"],
+                    }
+                    with open(path, "w", encoding="utf-8") as f:
+                        json.dump(counters, f, indent=2)
+            if irc and channel:
+                irc.say(channel, f"Counter '!{name}' created.")
+            self._log(f"[Counters] {username} created !{name}")
+            return True
+
+        if word == "!delcounter":
+            if not (user_roles & {"moderator", "broadcaster"}) or len(parts) < 2:
+                return True
+            name = parts[1].lower()
+            with self._counters_lock:
+                counters = {}
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        counters = json.load(f)
+                if name in counters:
+                    del counters[name]
+                    with open(path, "w", encoding="utf-8") as f:
+                        json.dump(counters, f, indent=2)
+            if irc and channel:
+                irc.say(channel, f"Counter '!{name}' deleted.")
+            self._log(f"[Counters] {username} deleted !{name}")
+            return True
+
+        # ── counter operation ──────────────────────────────────────────────────
+        counter_name = word[1:]
+        display_text: str | None = None
+
+        with self._counters_lock:
+            counters = {}
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    counters = json.load(f)
+            if counter_name not in counters:
+                return False
+
+            entry      = counters[counter_name]
+            edit_roles = set(entry.get("edit_roles", []))
+            subword    = parts[1].lower() if len(parts) > 1 else ""
+            changed    = False
+
+            if subword == "+1":
+                if user_roles & edit_roles:
+                    entry["value"] = max(0, entry["value"] + 1)
+                    changed = True
+            elif subword == "-1":
+                if user_roles & edit_roles:
+                    entry["value"] = max(0, entry["value"] - 1)
+                    changed = True
+            elif subword == "set" and len(parts) > 2:
+                if user_roles & {"moderator", "broadcaster"}:
+                    try:
+                        entry["value"] = int(parts[2])
+                        changed = True
+                    except ValueError:
+                        pass
+            elif subword == "reset":
+                if user_roles & {"moderator", "broadcaster"}:
+                    entry["value"] = 0
+                    changed = True
+
+            if changed:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(counters, f, indent=2)
+
+            tmpl = entry.get("display", f"{counter_name.title()}: {{value}}")
+            display_text = tmpl.replace("{value}", str(entry["value"]))
+
+        if display_text is not None and irc and channel:
+            irc.say(channel, display_text)
+            self._log(f"[Counters] {username} → !{counter_name}")
+        return True
 
     def _route_quotes(self, username: str, message: str, user_roles: set) -> bool:
         """Stub — implemented in Task 4. Returns False (not handled)."""
