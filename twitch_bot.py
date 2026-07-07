@@ -2532,8 +2532,104 @@ class WebApp:
         return True
 
     def _route_quotes(self, username: str, message: str, user_roles: set) -> bool:
-        """Stub — implemented in Task 4. Returns False (not handled)."""
-        return False
+        parts = message.strip().split()
+        if not parts:
+            return False
+        word = parts[0].lower()
+        if word not in ("!quote", "!quotecount", "!addquote", "!delquote"):
+            return False
+
+        with self._config_lock:
+            channel       = self._config.get("twitch_channel", "").lower().strip()
+            addquote_role = self._config.get("quote_addquote_role", "moderator")
+        irc  = self._irc
+        path = os.path.join(self._data_dir, "quotes.json")
+
+        def _load() -> list:
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    return json.load(f)
+            return []
+
+        def _save(quotes: list) -> None:
+            os.makedirs(self._data_dir, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(quotes, f, indent=2)
+
+        def _fmt(q: dict) -> str:
+            date = q.get("timestamp", "")[:10]
+            return f'[#{q["id"]}] {q["text"]} — {q["author"]} ({date})'
+
+        if word == "!quotecount":
+            with self._quotes_lock:
+                count = len(_load())
+            if irc and channel:
+                irc.say(channel, f"Total quotes: {count}")
+            return True
+
+        if word == "!addquote":
+            if not (user_roles & {addquote_role, "broadcaster"}):
+                return True
+            text = message.strip()[len("!addquote"):].strip()
+            if not text:
+                return True
+            with self._config_lock:
+                author = self._config.get("twitch_channel", "").lower().strip()
+            with self._quotes_lock:
+                quotes   = _load()
+                next_id  = max((q["id"] for q in quotes), default=0) + 1
+                quotes.append({
+                    "id":        next_id,
+                    "text":      text,
+                    "author":    author,
+                    "added_by":  username,
+                    "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
+                })
+                _save(quotes)
+            if irc and channel:
+                irc.say(channel, f"Quote #{next_id} added!")
+            self._log(f"[Quotes] {username} added #{next_id}")
+            return True
+
+        if word == "!delquote":
+            if not (user_roles & {"moderator", "broadcaster"}) or len(parts) < 2:
+                return True
+            try:
+                target_id = int(parts[1])
+            except ValueError:
+                return True
+            with self._quotes_lock:
+                quotes = _load()
+                before = len(quotes)
+                quotes = [q for q in quotes if q["id"] != target_id]
+                if len(quotes) < before:
+                    _save(quotes)
+                    msg = f"Quote #{target_id} deleted."
+                else:
+                    msg = f"Quote #{target_id} not found."
+            if irc and channel:
+                irc.say(channel, msg)
+            return True
+
+        # !quote [id]
+        with self._quotes_lock:
+            quotes = _load()
+        if not quotes:
+            if irc and channel:
+                irc.say(channel, "No quotes yet! Add one with !addquote <text>")
+            return True
+        if len(parts) > 1:
+            try:
+                target_id = int(parts[1])
+                match = next((q for q in quotes if q["id"] == target_id), None)
+                reply = _fmt(match) if match else f"Quote #{target_id} not found."
+            except ValueError:
+                reply = _fmt(random.choice(quotes))
+        else:
+            reply = _fmt(random.choice(quotes))
+        if irc and channel:
+            irc.say(channel, reply)
+        return True
 
     # ══════════════════════════════════════════════════════════════════════════
     # Message dispatch  (called from IRC thread)
