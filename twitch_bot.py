@@ -42,7 +42,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 
 import flask as _flask
 import requests
@@ -107,7 +107,6 @@ _PLACEHOLDER_RE = re.compile(r"%[a-zA-Z0-9_]+(?::[^%]+)?%")
 
 
 def _calc_uptime(started_at: str) -> str:
-    from datetime import timezone
     try:
         start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
         delta = datetime.now(timezone.utc) - start
@@ -116,6 +115,63 @@ def _calc_uptime(started_at: str) -> str:
         return f"{h}h {m}m" if h else f"{m}m"
     except Exception:
         return "offline"
+
+
+_DATA_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-\.]+$")
+
+
+def _safe_data_path(data_dir: str, name: str) -> str | None:
+    if not data_dir:
+        return None
+    if not _DATA_NAME_RE.fullmatch(name):
+        return None
+    if ".." in name:
+        return None
+    return os.path.join(data_dir, name)
+
+
+def _file_counter(path: str) -> str:
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            with open(path, encoding="utf-8") as f:
+                val = int(f.read().strip())
+        except FileNotFoundError:
+            val = 0
+        except ValueError:
+            return "(invalid counter)"
+        val += 1
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(str(val))
+        return str(val)
+    except Exception:
+        return "(error)"
+
+
+def _file_random_line(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = [ln.rstrip() for ln in f if ln.strip()]
+        return random.choice(lines) if lines else "(file not found)"
+    except FileNotFoundError:
+        return "(file not found)"
+    except Exception:
+        return "(error)"
+
+
+def _file_line(path: str, n: int) -> str:
+    if n < 1:
+        return "(invalid line)"
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+        if n > len(lines):
+            return "(line not found)"
+        return lines[n - 1].rstrip()
+    except FileNotFoundError:
+        return "(file not found)"
+    except Exception:
+        return "(error)"
 
 
 def _apply_placeholders(
@@ -145,13 +201,14 @@ def _apply_placeholders(
         "%title%":   stream_info.get("title", "offline"),
         "%viewers%": str(stream_info["viewer_count"]) if "viewer_count" in stream_info else "offline",
         "%uptime%":  _calc_uptime(stream_info["started_at"]) if "started_at" in stream_info else "offline",
-        "%random%":  str(random.randint(1, 100)),
     }
 
     def _replace(m: re.Match) -> str:
         token = m.group(0)
         if token in static:
             return static[token]
+        if token == "%random%":
+            return str(random.randint(1, 100))
         rm = re.fullmatch(r"%random:(\d+)-(\d+)%", token)
         if rm:
             lo, hi = int(rm.group(1)), int(rm.group(2))

@@ -64,13 +64,14 @@ class TestLocalPlaceholders(unittest.TestCase):
     def test_touser_empty_args(self):
         self.assertEqual(_ph("%touser%", args=""), "")
 
+    def test_touser_whitespace_only_args(self):
+        self.assertEqual(_ph("%touser%", args="   "), "")
+
     def test_time_format(self):
-        import re
         result = _ph("%time%")
         self.assertRegex(result, r"^\d{2}:\d{2}$")
 
     def test_date_format(self):
-        import re
         result = _ph("%date%")
         # e.g. "July 6, 2026"
         self.assertRegex(result, r"^[A-Z][a-z]+ \d+, \d{4}$")
