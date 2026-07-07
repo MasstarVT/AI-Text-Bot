@@ -829,7 +829,8 @@ class TwitchIRCClient:
         if m:
             bits      = int(tags.get("bits", 0) or 0)
             reward_id = tags.get("custom-reward-id", "")
-            self.on_message(m.group(1), m.group(2).strip(), bits, reward_id)
+            badges    = tags.get("badges", "")
+            self.on_message(m.group(1), m.group(2).strip(), bits, reward_id, badges)
 
         if " USERNOTICE #" in line:
             msg_id   = tags.get("msg-id", "")
@@ -1249,6 +1250,8 @@ class WebApp:
         # ── chat context ───────────────────────────────────────────────────────
         "ai_context_enabled": False,
         "ai_context_size":    5,
+        # ── quotes ─────────────────────────────────────────────────────────────
+        "quote_addquote_role": "moderator",
     }
 
     def __init__(self) -> None:
@@ -1332,6 +1335,7 @@ class WebApp:
             "scheduled_msgs": list(settings.get("scheduled_msgs", [])),
             "ai_context_enabled": settings.get("ai_context_enabled", False),
             "ai_context_size":    int(settings.get("ai_context_size", 5)),
+            "quote_addquote_role": settings.get("quote_addquote_role", "moderator"),
             "system_prompt":    "",
             # ── connection status ───────────────────────────────────────────
             "twitch_status":    "off",   # off / connecting / online
@@ -1349,6 +1353,9 @@ class WebApp:
         self._data_dir          = os.path.join(_here, "data")
         self._stream_cache:     dict             = {}
         self._stream_cache_ts:  float            = 0.0
+        self._roles_lock    = threading.Lock()
+        self._counters_lock = threading.Lock()
+        self._quotes_lock   = threading.Lock()
 
         # Load last-used prompt content from file
         last = self._config["last_prompt"]
@@ -1380,6 +1387,7 @@ class WebApp:
         )
         self._register_routes()
 
+        self._init_counter_presets()
         self._start_services()
         self._log("[System] Ready.")
         self._log_platform_info()
@@ -1621,6 +1629,7 @@ class WebApp:
             "scheduled_msgs": c.get("scheduled_msgs", []),
             "ai_context_enabled": c.get("ai_context_enabled", False),
             "ai_context_size":    c.get("ai_context_size",    5),
+            "quote_addquote_role": c.get("quote_addquote_role", "moderator"),
         }
         with open(self._settings_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -1823,6 +1832,7 @@ class WebApp:
             "cmd_list_enabled",
             "scheduled_msgs",
             "ai_context_enabled", "ai_context_size",
+            "quote_addquote_role",
         )
 
         @app.route("/api/settings", methods=["GET"])
@@ -2140,6 +2150,20 @@ class WebApp:
                 "files":  files,
             })
 
+    def _init_counter_presets(self) -> None:
+        path = os.path.join(self._data_dir, "counters.json")
+        if os.path.exists(path):
+            return
+        presets = {
+            "deaths": {"value": 0, "display": "Deaths: {value}", "edit_roles": ["moderator", "broadcaster"]},
+            "wins":   {"value": 0, "display": "Wins: {value}",   "edit_roles": ["moderator", "broadcaster"]},
+            "losses": {"value": 0, "display": "Losses: {value}", "edit_roles": ["moderator", "broadcaster"]},
+        }
+        os.makedirs(self._data_dir, exist_ok=True)
+        with self._counters_lock:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(presets, f, indent=2)
+
     def _start_services(self) -> None:
         self._tts = TTSEngine(
             get_config=self._get_tts_cfg,
@@ -2279,11 +2303,37 @@ class WebApp:
         self._log("[Discord] Disconnected.")
 
     # ══════════════════════════════════════════════════════════════════════════
+    # User role resolution
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _build_user_roles(self, username: str, badges_str: str) -> set[str]:
+        """Return the set of roles for a user based on IRC badges and roles.json."""
+        roles: set[str] = {"everyone"}
+        _NATIVE = {"broadcaster", "moderator", "vip", "subscriber"}
+        for badge in badges_str.split(","):
+            name = badge.split("/")[0]
+            if name in _NATIVE:
+                roles.add(name)
+        roles_path = os.path.join(self._data_dir, "roles.json")
+        try:
+            with self._roles_lock:
+                if os.path.exists(roles_path):
+                    with open(roles_path, encoding="utf-8") as f:
+                        custom = json.load(f)
+                    uname = username.lower()
+                    for role_name, members in custom.items():
+                        if uname in [m.lower() for m in members]:
+                            roles.add(role_name)
+        except Exception:
+            pass
+        return roles
+
+    # ══════════════════════════════════════════════════════════════════════════
     # Message dispatch  (called from IRC thread)
     # ══════════════════════════════════════════════════════════════════════════
 
     def _dispatch(self, username: str, message: str,
-                  bits: int = 0, reward_id: str = "") -> None:
+                  bits: int = 0, reward_id: str = "", badges: str = "") -> None:
         tag = (f"  [{bits} bits]" if bits
                else (f"  [channel points]" if reward_id else ""))
         self._log(f"[Chat] {username}{tag}: {message}")
