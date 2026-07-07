@@ -2130,6 +2130,178 @@ class WebApp:
                 return _flask.jsonify({"error": "delete error"}), 500
             return _flask.jsonify({"ok": True})
 
+        # ── roles ─────────────────────────────────────────────────────────────
+
+        @app.route("/api/roles")
+        def api_roles_get():
+            path = os.path.join(self._data_dir, "roles.json")
+            with self._roles_lock:
+                data = {}
+                if os.path.exists(path):
+                    try:
+                        with open(path, encoding="utf-8") as f:
+                            data = json.load(f)
+                    except Exception:
+                        pass
+            return _flask.jsonify({"roles": data})
+
+        @app.route("/api/roles/<role>", methods=["DELETE"])
+        def api_roles_delete(role: str):
+            path = os.path.join(self._data_dir, "roles.json")
+            with self._roles_lock:
+                data = {}
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        data = json.load(f)
+                data.pop(role, None)
+                os.makedirs(self._data_dir, exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+            return _flask.jsonify({"ok": True})
+
+        @app.route("/api/roles/<role>/members", methods=["POST"])
+        def api_roles_add_member(role: str):
+            body = _flask.request.get_json(force=True, silent=True) or {}
+            user = str(body.get("user", "")).strip().lower()
+            if not user:
+                return _flask.jsonify({"error": "user required"}), 400
+            path = os.path.join(self._data_dir, "roles.json")
+            with self._roles_lock:
+                data = {}
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        data = json.load(f)
+                members = data.setdefault(role, [])
+                if user not in members:
+                    members.append(user)
+                os.makedirs(self._data_dir, exist_ok=True)
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+            return _flask.jsonify({"ok": True})
+
+        @app.route("/api/roles/<role>/members/<user>", methods=["DELETE"])
+        def api_roles_remove_member(role: str, user: str):
+            path = os.path.join(self._data_dir, "roles.json")
+            with self._roles_lock:
+                data = {}
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        data = json.load(f)
+                if role in data:
+                    data[role] = [m for m in data[role] if m != user.lower()]
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+            return _flask.jsonify({"ok": True})
+
+        # ── counters ───────────────────────────────────────────────────────────
+
+        @app.route("/api/counters")
+        def api_counters_get():
+            path = os.path.join(self._data_dir, "counters.json")
+            with self._counters_lock:
+                data = {}
+                if os.path.exists(path):
+                    try:
+                        with open(path, encoding="utf-8") as f:
+                            data = json.load(f)
+                    except Exception:
+                        pass
+            return _flask.jsonify({"counters": data})
+
+        @app.route("/api/counters", methods=["POST"])
+        def api_counters_create():
+            body = _flask.request.get_json(force=True, silent=True) or {}
+            name = str(body.get("name", "")).strip().lower()
+            if not name:
+                return _flask.jsonify({"error": "name required"}), 400
+            path = os.path.join(self._data_dir, "counters.json")
+            with self._counters_lock:
+                os.makedirs(self._data_dir, exist_ok=True)
+                data = {}
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        data = json.load(f)
+                if name not in data:
+                    data[name] = {
+                        "value": 0,
+                        "display": body.get("display", f"{name.title()}: {{value}}"),
+                        "edit_roles": body.get("edit_roles", ["moderator", "broadcaster"]),
+                    }
+                    with open(path, "w", encoding="utf-8") as f:
+                        json.dump(data, f, indent=2)
+            return _flask.jsonify({"ok": True})
+
+        @app.route("/api/counters/<name>", methods=["PATCH"])
+        def api_counters_update(name: str):
+            body = _flask.request.get_json(force=True, silent=True) or {}
+            path = os.path.join(self._data_dir, "counters.json")
+            with self._counters_lock:
+                data = {}
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        data = json.load(f)
+                if name not in data:
+                    return _flask.jsonify({"error": "not found"}), 404
+                if "value" in body:
+                    try:
+                        data[name]["value"] = int(body["value"])
+                    except (ValueError, TypeError):
+                        pass
+                if "display" in body:
+                    data[name]["display"] = str(body["display"])
+                if "edit_roles" in body and isinstance(body["edit_roles"], list):
+                    data[name]["edit_roles"] = body["edit_roles"]
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+            return _flask.jsonify({"ok": True})
+
+        @app.route("/api/counters/<name>", methods=["DELETE"])
+        def api_counters_delete(name: str):
+            path = os.path.join(self._data_dir, "counters.json")
+            with self._counters_lock:
+                data = {}
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        data = json.load(f)
+                data.pop(name, None)
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2)
+            return _flask.jsonify({"ok": True})
+
+        # ── quotes ─────────────────────────────────────────────────────────────
+
+        @app.route("/api/quotes")
+        def api_quotes_get():
+            q = _flask.request.args.get("q", "").lower()
+            path = os.path.join(self._data_dir, "quotes.json")
+            with self._quotes_lock:
+                quotes = []
+                if os.path.exists(path):
+                    try:
+                        with open(path, encoding="utf-8") as f:
+                            quotes = json.load(f)
+                    except Exception:
+                        pass
+            if q:
+                quotes = [x for x in quotes
+                          if q in x.get("text", "").lower()
+                          or q in x.get("author", "").lower()
+                          or q in x.get("added_by", "").lower()]
+            return _flask.jsonify({"quotes": quotes})
+
+        @app.route("/api/quotes/<int:quote_id>", methods=["DELETE"])
+        def api_quotes_delete(quote_id: int):
+            path = os.path.join(self._data_dir, "quotes.json")
+            with self._quotes_lock:
+                quotes = []
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        quotes = json.load(f)
+                quotes = [q for q in quotes if q["id"] != quote_id]
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(quotes, f, indent=2)
+            return _flask.jsonify({"ok": True})
+
         # ── file browser ──────────────────────────────────────────────────────
 
         @app.route("/api/browse")
