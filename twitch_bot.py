@@ -33,6 +33,7 @@ import base64
 import collections
 import json
 import os
+import random
 import re
 import queue
 import socket
@@ -102,16 +103,74 @@ _THANKS_TEMPLATES: dict[str, Callable[[str, dict], str]] = {
     "bits":        lambda u, e: f"[EVENT] {u} cheered {e.get('bits','?')} bits! Thank them.",
 }
 
-_PLACEHOLDER_RE = re.compile(r"%user%|%channel%|%command%|%args%")
+_PLACEHOLDER_RE = re.compile(r"%[a-zA-Z0-9_]+(?::[^%]+)?%")
 
-def _apply_placeholders(response: str, username: str, channel: str, command: str, args: str) -> str:
-    placeholders = {
+
+def _calc_uptime(started_at: str) -> str:
+    from datetime import timezone
+    try:
+        start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        delta = datetime.now(timezone.utc) - start
+        h, rem = divmod(int(delta.total_seconds()), 3600)
+        m = rem // 60
+        return f"{h}h {m}m" if h else f"{m}m"
+    except Exception:
+        return "offline"
+
+
+def _apply_placeholders(
+    response: str,
+    username: str,
+    channel: str,
+    command: str,
+    args: str,
+    cmd_count: int = 0,
+    stream_info: dict | None = None,
+    data_dir: str = "",
+) -> str:
+    if stream_info is None:
+        stream_info = {}
+    now = datetime.now()
+    touser = args.split()[0].lstrip("@") if args.split() else ""
+    static: dict[str, str] = {
         "%user%":    username,
         "%channel%": channel,
         "%command%": command,
         "%args%":    args,
+        "%touser%":  touser,
+        "%time%":    now.strftime("%H:%M"),
+        "%date%":    now.strftime("%B ") + str(now.day) + now.strftime(", %Y"),
+        "%count%":   str(cmd_count),
+        "%game%":    stream_info.get("game_name", "offline"),
+        "%title%":   stream_info.get("title", "offline"),
+        "%viewers%": str(stream_info["viewer_count"]) if "viewer_count" in stream_info else "offline",
+        "%uptime%":  _calc_uptime(stream_info["started_at"]) if "started_at" in stream_info else "offline",
+        "%random%":  str(random.randint(1, 100)),
     }
-    return _PLACEHOLDER_RE.sub(lambda m: placeholders.get(m.group(0), m.group(0)), response)
+
+    def _replace(m: re.Match) -> str:
+        token = m.group(0)
+        if token in static:
+            return static[token]
+        rm = re.fullmatch(r"%random:(\d+)-(\d+)%", token)
+        if rm:
+            lo, hi = int(rm.group(1)), int(rm.group(2))
+            return str(random.randint(lo, hi)) if lo <= hi else token
+        cm = re.fullmatch(r"%counter:([^%]+)%", token)
+        if cm:
+            path = _safe_data_path(data_dir, cm.group(1))
+            return _file_counter(path) if path else token
+        rl = re.fullmatch(r"%randomline:([^%]+)%", token)
+        if rl:
+            path = _safe_data_path(data_dir, rl.group(1))
+            return _file_random_line(path) if path else token
+        lm = re.fullmatch(r"%line:(\d+):([^%]+)%", token)
+        if lm:
+            path = _safe_data_path(data_dir, lm.group(2))
+            return _file_line(path, int(lm.group(1))) if path else token
+        return token
+
+    return _PLACEHOLDER_RE.sub(_replace, response)
 
 
 def _scan_voices_dir(voices_dir: str) -> list[str]:
