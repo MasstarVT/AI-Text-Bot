@@ -83,6 +83,57 @@ Config keys: `ignore_list_enabled` (bool), `ignore_list` (list of lowercase stri
 
 **Bot self-filter:** Regardless of the ignore list setting, `_dispatch` always drops messages where the sender username matches `bot_username` (case-insensitive). This prevents the bot's own chat messages from triggering AI responses and is not configurable.
 
+## Role system (`_build_user_roles`, `_route_role_commands`)
+
+Every incoming Twitch message builds a `user_roles: set[str]` for the sender via `_build_user_roles(username, badges_str)`:
+
+1. Always includes `"everyone"`
+2. Parses `badges` IRCv3 tag → adds `broadcaster`, `moderator`, `vip`, `subscriber` as appropriate
+3. Reads `data/roles.json` → adds any custom roles the user belongs to
+
+Custom roles are managed via:
+- Chat: `!addrole <user> <role>`, `!removerole <user> <role>`, `!roles <user>` (mod/broadcaster only)
+- Web UI: Settings → Roles tab
+
+Storage: `data/roles.json` — maps role name to list of lowercase usernames:
+
+```json
+{"trusted": ["viewer1", "viewer2"]}
+```
+
+File reads/writes use `_roles_lock`.
+
+## Counter commands (`_route_counters`)
+
+Persistent integer counters stored in `data/counters.json`. Pre-seeded with `deaths`, `wins`, `losses` on first run.
+
+| Command | Who | Effect |
+|---|---|---|
+| `!<counter>` | anyone | Posts display string with current value |
+| `!<counter> +1` / `-1` | `edit_roles` members | Increment/decrement (floor 0) |
+| `!<counter> set <n>` | mod/broadcaster | Set to exact value |
+| `!<counter> reset` | mod/broadcaster | Reset to 0 |
+| `!addcounter <name>` | mod/broadcaster | Create counter |
+| `!delcounter <name>` | mod/broadcaster | Delete counter |
+
+Display format uses `{value}` placeholder. Managed via Settings → Counters tab. File reads/writes use `_counters_lock`. Routing in `_dispatch` runs before `_route_chat_commands` — a counter name takes priority over an identically-named custom command.
+
+## Quote system (`_route_quotes`)
+
+Quotes stored in `data/quotes.json` as a list ordered by insertion. IDs are sequential and never reused.
+
+| Command | Who | Effect |
+|---|---|---|
+| `!quote` | anyone | Random quote |
+| `!quote <id>` | anyone | Specific quote by ID |
+| `!quotecount` | anyone | Total count |
+| `!addquote <text>` | `quote_addquote_role` or broadcaster | Add quote |
+| `!delquote <id>` | mod/broadcaster | Delete quote |
+
+Display format: `[#<id>] <text> — <author> (<YYYY-MM-DD>)`
+
+`quote_addquote_role` is configurable in Settings → Quotes tab (default: `moderator`). File reads/writes use `_quotes_lock`. Routing runs after `_route_counters` and before `_route_chat_commands`.
+
 ## Custom `!command` responses (`_route_chat_commands`)
 
 When `chat_commands_enabled` is `True` and a message starts with a registered `!word`, `_route_chat_commands` posts the configured reply to Twitch chat without invoking the AI. Called from `_dispatch` after the ignore check and before `_route_plays`. Commands are stored as `dict[str, dict]` in `chat_commands` (keys normalised to lowercase, auto-prefixed with `!`).
@@ -94,6 +145,8 @@ Each command entry has three fields:
 | `response` | `str` | Reply text; placeholder substitution applied; truncated to 500 chars |
 | `cooldown` | `int` | Seconds between allowed uses; `0` = no cooldown |
 | `cooldown_type` | `str` | `"global"` (channel-wide timer) or `"user"` (per-viewer timer) |
+
+**Role gating:** Each command entry also has an `"allowed_roles": []` field. Empty = anyone can use it. Non-empty = user must have at least one of the listed roles (checked against their Twitch badge roles + custom roles from `data/roles.json`). Roles are checked via `user_roles & set(allowed_roles)`.
 
 **Migration:** Settings saved with the old `dict[str, str]` format are promoted on load: `"Hey!"` → `{"response": "Hey!", "cooldown": 0, "cooldown_type": "global"}`.
 
@@ -233,8 +286,11 @@ Main page layout:
   - **TTS** — Piper executable, model, config paths
   - **Thanks** — per-event toggles, cooldown, shared/dedicated prompt
   - **Ignore** — ignore list toggle and username list
-  - **Commands** — custom `!commands` table, cooldowns, auto-list toggle
+  - **Commands** — custom `!commands` table, cooldowns, allowed_roles, auto-list toggle
   - **Schedule** — scheduled message entries (text + interval)
+  - **Roles** — custom role → username list management
+  - **Counters** — counter name, display format, edit_roles setting
+  - **Quotes** — quote list, quote_addquote_role setting
 
 ## Saved prompts
 
