@@ -2573,8 +2573,7 @@ class WebApp:
             text = message.strip()[len("!addquote"):].strip()
             if not text:
                 return True
-            with self._config_lock:
-                author = self._config.get("twitch_channel", "").lower().strip()
+            author = channel
             with self._quotes_lock:
                 quotes   = _load()
                 next_id  = max((q["id"] for q in quotes), default=0) + 1
