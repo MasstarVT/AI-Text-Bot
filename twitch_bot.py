@@ -152,7 +152,7 @@ def _file_random_line(path: str) -> str:
     try:
         with open(path, encoding="utf-8") as f:
             lines = [ln.rstrip() for ln in f if ln.strip()]
-        return random.choice(lines) if lines else "(file not found)"
+        return random.choice(lines) if lines else "(empty file)"
     except FileNotFoundError:
         return "(file not found)"
     except Exception:

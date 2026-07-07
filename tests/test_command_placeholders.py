@@ -2,8 +2,6 @@
 import unittest
 import sys
 import os
-from unittest.mock import patch
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from twitch_bot import _apply_placeholders
@@ -137,6 +135,151 @@ class TestAPIPlaceholders(unittest.TestCase):
 
     def test_uptime_offline_when_no_started_at(self):
         self.assertEqual(_ph("%uptime%", stream_info={}), "offline")
+
+
+class TestFilePlaceholders(unittest.TestCase):
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _ph(self, response, **kwargs):
+        return _apply_placeholders(response, "viewer", "ch", "!cmd", "",
+                                    data_dir=self.tmp, **kwargs)
+
+    # ── _safe_data_path ───────────────────────────────────────────────────────
+
+    def test_safe_path_valid(self):
+        from twitch_bot import _safe_data_path
+        result = _safe_data_path(self.tmp, "facts.txt")
+        self.assertEqual(result, os.path.join(self.tmp, "facts.txt"))
+
+    def test_safe_path_rejects_traversal(self):
+        from twitch_bot import _safe_data_path
+        self.assertIsNone(_safe_data_path(self.tmp, "../secret.txt"))
+
+    def test_safe_path_rejects_slash(self):
+        from twitch_bot import _safe_data_path
+        self.assertIsNone(_safe_data_path(self.tmp, "sub/file.txt"))
+
+    def test_safe_path_rejects_empty_data_dir(self):
+        from twitch_bot import _safe_data_path
+        self.assertIsNone(_safe_data_path("", "file.txt"))
+
+    def test_safe_path_rejects_bad_chars(self):
+        from twitch_bot import _safe_data_path
+        self.assertIsNone(_safe_data_path(self.tmp, "file name.txt"))
+
+    # ── %counter% ─────────────────────────────────────────────────────────────
+
+    def test_counter_starts_at_1_when_missing(self):
+        result = self._ph("%counter:deaths.txt%")
+        self.assertEqual(result, "1")
+        with open(os.path.join(self.tmp, "deaths.txt")) as f:
+            self.assertEqual(f.read(), "1")
+
+    def test_counter_increments(self):
+        path = os.path.join(self.tmp, "deaths.txt")
+        with open(path, "w") as f:
+            f.write("5")
+        result = self._ph("%counter:deaths.txt%")
+        self.assertEqual(result, "6")
+
+    def test_counter_invalid_file_returns_error_string(self):
+        path = os.path.join(self.tmp, "bad.txt")
+        with open(path, "w") as f:
+            f.write("not a number")
+        result = self._ph("%counter:bad.txt%")
+        self.assertEqual(result, "(invalid counter)")
+
+    def test_counter_traversal_left_as_is(self):
+        result = self._ph("%counter:../secret.txt%")
+        self.assertEqual(result, "%counter:../secret.txt%")
+
+    # ── %randomline% ──────────────────────────────────────────────────────────
+
+    def test_randomline_picks_from_file(self):
+        path = os.path.join(self.tmp, "facts.txt")
+        with open(path, "w") as f:
+            f.write("Fact one\nFact two\nFact three\n")
+        for _ in range(10):
+            result = self._ph("%randomline:facts.txt%")
+            self.assertIn(result, ["Fact one", "Fact two", "Fact three"])
+
+    def test_randomline_skips_blank_lines(self):
+        path = os.path.join(self.tmp, "facts.txt")
+        with open(path, "w") as f:
+            f.write("Only line\n\n\n")
+        self.assertEqual(self._ph("%randomline:facts.txt%"), "Only line")
+
+    def test_randomline_all_blank_returns_empty_file(self):
+        path = os.path.join(self.tmp, "blank.txt")
+        with open(path, "w") as f:
+            f.write("\n\n\n")
+        self.assertEqual(self._ph("%randomline:blank.txt%"), "(empty file)")
+
+    def test_randomline_file_not_found(self):
+        result = self._ph("%randomline:missing.txt%")
+        self.assertEqual(result, "(file not found)")
+
+    def test_randomline_traversal_left_as_is(self):
+        result = self._ph("%randomline:../etc/passwd%")
+        self.assertEqual(result, "%randomline:../etc/passwd%")
+
+    # ── %line:N% ──────────────────────────────────────────────────────────────
+
+    def test_line_reads_correct_line(self):
+        path = os.path.join(self.tmp, "quotes.txt")
+        with open(path, "w") as f:
+            f.write("Line one\nLine two\nLine three\n")
+        self.assertEqual(self._ph("%line:2:quotes.txt%"), "Line two")
+
+    def test_line_first_line(self):
+        path = os.path.join(self.tmp, "quotes.txt")
+        with open(path, "w") as f:
+            f.write("Alpha\nBeta\n")
+        self.assertEqual(self._ph("%line:1:quotes.txt%"), "Alpha")
+
+    def test_line_beyond_file(self):
+        path = os.path.join(self.tmp, "quotes.txt")
+        with open(path, "w") as f:
+            f.write("Only\n")
+        self.assertEqual(self._ph("%line:99:quotes.txt%"), "(line not found)")
+
+    def test_line_zero_invalid(self):
+        path = os.path.join(self.tmp, "quotes.txt")
+        with open(path, "w") as f:
+            f.write("Only\n")
+        self.assertEqual(self._ph("%line:0:quotes.txt%"), "(invalid line)")
+
+    def test_line_file_not_found(self):
+        self.assertEqual(self._ph("%line:1:missing.txt%"), "(file not found)")
+
+    # ── end-to-end integration through _apply_placeholders ───────────────────
+
+    def test_counter_end_to_end(self):
+        """_replace dispatch path for %counter% works through _apply_placeholders."""
+        r1 = self._ph("Deaths: %counter:e2e.txt%")
+        r2 = self._ph("Deaths: %counter:e2e.txt%")
+        self.assertEqual(r1, "Deaths: 1")
+        self.assertEqual(r2, "Deaths: 2")
+
+    def test_randomline_end_to_end(self):
+        path = os.path.join(self.tmp, "lines.txt")
+        with open(path, "w") as f:
+            f.write("A\nB\nC\n")
+        result = self._ph("Fact: %randomline:lines.txt%")
+        self.assertIn(result, ["Fact: A", "Fact: B", "Fact: C"])
+
+    def test_line_end_to_end(self):
+        path = os.path.join(self.tmp, "q.txt")
+        with open(path, "w") as f:
+            f.write("Hello\nWorld\n")
+        self.assertEqual(self._ph("Quote: %line:2:q.txt%"), "Quote: World")
 
 
 if __name__ == "__main__":
