@@ -2273,6 +2273,7 @@ class WebApp:
                 },
                 timeout=5,
             )
+            resp.raise_for_status()
             data   = resp.json().get("data", [])
             result = data[0] if data else {}
         except Exception as exc:
