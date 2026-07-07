@@ -2459,9 +2459,9 @@ class WebApp:
                     }
                     with open(path, "w", encoding="utf-8") as f:
                         json.dump(counters, f, indent=2)
-            if irc and channel:
-                irc.say(channel, f"Counter '!{name}' created.")
-            self._log(f"[Counters] {username} created !{name}")
+                    if irc and channel:
+                        irc.say(channel, f"Counter '!{name}' created.")
+                    self._log(f"[Counters] {username} created !{name}")
             return True
 
         if word == "!delcounter":
@@ -2477,9 +2477,9 @@ class WebApp:
                     del counters[name]
                     with open(path, "w", encoding="utf-8") as f:
                         json.dump(counters, f, indent=2)
-            if irc and channel:
-                irc.say(channel, f"Counter '!{name}' deleted.")
-            self._log(f"[Counters] {username} deleted !{name}")
+                    if irc and channel:
+                        irc.say(channel, f"Counter '!{name}' deleted.")
+                    self._log(f"[Counters] {username} deleted !{name}")
             return True
 
         # ── counter operation ──────────────────────────────────────────────────
