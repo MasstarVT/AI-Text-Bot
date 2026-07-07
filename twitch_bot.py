@@ -2344,7 +2344,11 @@ class WebApp:
         is_mod = bool(user_roles & {"moderator", "broadcaster"})
 
         if cmd == "!addrole":
-            if not is_mod or len(parts) < 3:
+            if not is_mod:
+                return True
+            if len(parts) < 3:
+                if irc and channel:
+                    irc.say(channel, "Usage: !addrole <user> <role>")
                 return True
             target = parts[1].lower()
             role   = parts[2].lower()
@@ -2365,7 +2369,11 @@ class WebApp:
             self._log(f"[Roles] {username} → !addrole {target} {role}")
 
         elif cmd == "!removerole":
-            if not is_mod or len(parts) < 3:
+            if not is_mod:
+                return True
+            if len(parts) < 3:
+                if irc and channel:
+                    irc.say(channel, "Usage: !removerole <user> <role>")
                 return True
             target = parts[1].lower()
             role   = parts[2].lower()
@@ -2375,10 +2383,15 @@ class WebApp:
                 if os.path.exists(path):
                     with open(path, encoding="utf-8") as f:
                         custom = json.load(f)
+                changed = False
                 if role in custom:
-                    custom[role] = [m for m in custom[role] if m != target]
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(custom, f, indent=2)
+                    new_members = [m for m in custom[role] if m != target]
+                    if len(new_members) != len(custom[role]):
+                        custom[role] = new_members
+                        changed = True
+                if changed:
+                    with open(path, "w", encoding="utf-8") as f:
+                        json.dump(custom, f, indent=2)
             if irc and channel:
                 irc.say(channel, f"Removed '{role}' from {target}.")
             self._log(f"[Roles] {username} → !removerole {target} {role}")
@@ -2440,8 +2453,8 @@ class WebApp:
             self._chat_history.append((username, message))
 
         user_roles = self._build_user_roles(username, badges)
-        self._route_role_commands(username, message, user_roles)
-        handled = self._route_counters(username, message, user_roles)
+        handled = self._route_role_commands(username, message, user_roles)
+        handled = handled or self._route_counters(username, message, user_roles)
         handled = handled or self._route_quotes(username, message, user_roles)
         if not handled:
             self._route_chat_commands(username, message)
