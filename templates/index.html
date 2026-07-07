@@ -252,6 +252,9 @@ textarea{resize:vertical;font-family:var(--mono)}
       <button class="tab"        onclick="showTab('commands')">Commands</button>
       <button class="tab"        onclick="showTab('files')">Files</button>
       <button class="tab"        onclick="showTab('schedule')">Schedule</button>
+      <button class="tab"        onclick="showTab('roles')">Roles</button>
+      <button class="tab"        onclick="showTab('counters')">Counters</button>
+      <button class="tab"        onclick="showTab('quotes')">Quotes</button>
     </div>
     <div class="modal-body">
 
@@ -450,6 +453,7 @@ textarea{resize:vertical;font-family:var(--mono)}
               <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Response</th>
               <th style="padding:4px 6px;font-size:11px;color:var(--muted);text-align:center">Cooldown (s)</th>
               <th style="padding:4px 6px;font-size:11px;color:var(--muted);text-align:center">Mode</th>
+              <th style="padding:4px 6px;font-size:11px;color:var(--muted)">Req. role</th>
               <th style="width:32px"></th>
             </tr>
           </thead>
@@ -509,6 +513,71 @@ textarea{resize:vertical;font-family:var(--mono)}
           <tbody id="sched-rows"></tbody>
         </table>
         <button class="btn btn-neutral btn-sm" onclick="addSchedRow()">+ Add message</button>
+      </div>
+
+      <!-- Roles tab -->
+      <div id="tab-roles" class="tab-pane">
+        <div class="section-lbl">Custom Roles</div>
+        <div class="hint">Assign custom roles to viewers. Twitch native roles (broadcaster, moderator, vip, subscriber) are automatic. Use <strong>!addrole &lt;user&gt; &lt;role&gt;</strong> in chat or manage here.</div>
+        <div class="divider"></div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <input id="new-role-name" type="text" placeholder="Role name (e.g. trusted)" style="flex:1">
+          <button class="btn btn-green btn-sm" onclick="createRole()">+ Create role</button>
+        </div>
+        <div id="roles-list"></div>
+      </div>
+
+      <!-- Counters tab -->
+      <div id="tab-counters" class="tab-pane">
+        <div class="section-lbl">Counters</div>
+        <div class="hint">Persistent counters for chat. Viewers type <strong>!deaths</strong> to see the value; mods type <strong>!deaths +1</strong> or <strong>!deaths -1</strong> to change it.</div>
+        <div class="divider"></div>
+        <table id="counters-table" style="width:100%;border-collapse:collapse;margin-bottom:8px">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Command</th>
+              <th style="text-align:center;padding:4px 6px;font-size:11px;color:var(--muted)">Value</th>
+              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Display format</th>
+              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Edit roles</th>
+              <th style="width:32px"></th>
+            </tr>
+          </thead>
+          <tbody id="counters-rows"></tbody>
+        </table>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <input id="new-counter-name" type="text" placeholder="Counter name (e.g. hype)" style="flex:1">
+          <button class="btn btn-green btn-sm" onclick="addCounter()">+ Add counter</button>
+        </div>
+      </div>
+
+      <!-- Quotes tab -->
+      <div id="tab-quotes" class="tab-pane">
+        <div class="section-lbl">Quotes</div>
+        <div class="hint">Viewers type <strong>!quote</strong> for a random quote or <strong>!quote #</strong> for a specific one. Authorized users add quotes with <strong>!addquote &lt;text&gt;</strong>.</div>
+        <div class="divider"></div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+          <label style="font-size:13px;white-space:nowrap">!addquote role:</label>
+          <select id="s-quote-addquote-role" style="flex:0 0 140px">
+            <option value="moderator">moderator</option>
+            <option value="vip">vip</option>
+            <option value="subscriber">subscriber</option>
+            <option value="everyone">everyone</option>
+          </select>
+          <input id="quote-search" type="text" placeholder="Search quotes…" style="flex:1" oninput="loadQuotes()">
+        </div>
+        <table id="quotes-table" style="width:100%;border-collapse:collapse;margin-bottom:8px">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted);width:36px">#</th>
+              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Quote</th>
+              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Added by</th>
+              <th style="padding:4px 6px;font-size:11px;color:var(--muted);width:80px">Date</th>
+              <th style="width:32px"></th>
+            </tr>
+          </thead>
+          <tbody id="quotes-rows"></tbody>
+        </table>
+        <div id="quotes-empty" style="display:none;color:var(--muted);font-size:13px;padding:8px 0">No quotes yet.</div>
       </div>
 
     </div><!-- /modal-body -->
@@ -973,6 +1042,7 @@ function openSettings() {
     el('s-ctx-enabled').checked = !!s.ai_context_enabled;
     el('s-ctx-size').value      = s.ai_context_size ?? 5;
     toggleCtx();
+    el('s-quote-addquote-role').value = s.quote_addquote_role || 'moderator';
     // provider
     if (s.llm_provider) {
       el('s-provider').value = s.llm_provider;
@@ -1000,6 +1070,9 @@ function showTab(name) {
   });
   if (name === 'tts') refreshVoices();
   if (name === 'files') loadDataFiles();
+  if (name === 'roles') loadRoles();
+  if (name === 'counters') loadCounters();
+  if (name === 'quotes') loadQuotes();
 }
 
 function saveSettings() {
@@ -1044,6 +1117,7 @@ function saveSettings() {
     scheduled_msgs: getSchedMsgs(),
     ai_context_enabled: el('s-ctx-enabled').checked,
     ai_context_size:    parseInt(el('s-ctx-size').value) || 5,
+    quote_addquote_role: el('s-quote-addquote-role').value,
   };
   api('/api/settings','POST', body).then(() => closeSettings());
 }
@@ -1102,11 +1176,13 @@ function getOAuthUrl() {
 }
 
 function addCmdRow(cmd, entry) {
-  const tbody    = el('cmd-rows');
-  const tr       = document.createElement('tr');
-  const resp     = (entry && typeof entry === 'object') ? (entry.response    || '') : (entry || '');
-  const cooldown = (entry && typeof entry === 'object') ? (entry.cooldown    ?? 0)  : 0;
-  const cdType   = (entry && typeof entry === 'object') ? (entry.cooldown_type || 'global') : 'global';
+  const tbody      = el('cmd-rows');
+  const tr         = document.createElement('tr');
+  const resp       = (entry && typeof entry === 'object') ? (entry.response     || '') : (entry || '');
+  const cooldown   = (entry && typeof entry === 'object') ? (entry.cooldown     ?? 0)  : 0;
+  const cdType     = (entry && typeof entry === 'object') ? (entry.cooldown_type || 'global') : 'global';
+  const rolesArr   = (entry && typeof entry === 'object' && Array.isArray(entry.allowed_roles)) ? entry.allowed_roles : [];
+  const rolesStr   = rolesArr.join(', ');
   tr.innerHTML = `
     <td style="padding:2px 4px"><input type="text" placeholder="!hello" style="width:100%" value="${escHtml(cmd||'')}"></td>
     <td style="padding:2px 4px"><input type="text" placeholder="Hey there!" style="width:100%" value="${escHtml(resp)}"></td>
@@ -1117,6 +1193,7 @@ function addCmdRow(cmd, entry) {
         <option value="user"${cdType==='user'?' selected':''}>Per-user</option>
       </select>
     </td>
+    <td style="padding:2px 4px"><input type="text" placeholder="everyone" style="width:100%" value="${escHtml(rolesStr)}" title="Comma-separated roles (empty = everyone)"></td>
     <td style="padding:2px 4px;text-align:center"><button class="btn-icon" onclick="this.closest('tr').remove()">✕</button></td>
   `;
   tbody.appendChild(tr);
@@ -1186,13 +1263,17 @@ function escHtml(s) {
 function getChatCommands() {
   const cmds = {};
   el('cmd-rows').querySelectorAll('tr').forEach(tr => {
-    const inputs   = tr.querySelectorAll('input');
-    const sel      = tr.querySelector('select');
-    const cmd      = inputs[0].value.trim().toLowerCase();
-    const resp     = inputs[1].value.trim();
-    const cooldown = parseInt(inputs[2].value) || 0;
-    const cdType   = sel ? sel.value : 'global';
-    if (cmd && resp) cmds[cmd] = {response: resp, cooldown: cooldown, cooldown_type: cdType};
+    const inputs = tr.querySelectorAll('input, select');
+    const cmd    = inputs[0].value.trim().toLowerCase();
+    const resp   = inputs[1].value.trim();
+    if (!cmd || !resp) return;
+    const cooldown      = parseInt(inputs[2].value) || 0;
+    const cooldown_type = inputs[3].value;
+    const rolesRaw      = inputs[4].value.trim();
+    const allowed_roles = rolesRaw
+      ? rolesRaw.split(',').map(r => r.trim().toLowerCase()).filter(Boolean)
+      : [];
+    cmds[cmd] = { response: resp, cooldown, cooldown_type, allowed_roles };
   });
   return cmds;
 }
@@ -1305,6 +1386,140 @@ function browseTo(path) {
       list.appendChild(row);
     });
   });
+}
+
+// ── Roles tab ─────────────────────────────────────────────────────────────
+function loadRoles() {
+  api('/api/roles').then(d => {
+    const box = el('roles-list');
+    box.innerHTML = '';
+    const roles = d.roles || {};
+    if (!Object.keys(roles).length) {
+      box.innerHTML = '<div style="color:var(--muted);font-size:13px">No custom roles yet.</div>';
+      return;
+    }
+    Object.entries(roles).forEach(([role, members]) => {
+      const section = document.createElement('div');
+      section.style.cssText = 'margin-bottom:12px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:6px';
+      const header = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <strong style="font-size:13px">${escHtml(role)}</strong>
+        <button class="btn btn-red btn-sm" onclick="deleteRole('${escHtml(role)}')">Delete role</button>
+      </div>`;
+      const memberHtml = members.map(m =>
+        `<span style="display:inline-flex;align-items:center;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;margin:2px">
+          ${escHtml(m)}
+          <button class="btn-icon" style="font-size:10px" onclick="removeRoleMember('${escHtml(role)}','${escHtml(m)}')">✕</button>
+        </span>`
+      ).join('');
+      const addRow = `<div style="display:flex;gap:6px;margin-top:6px">
+        <input type="text" placeholder="Add username…" id="add-member-${escHtml(role)}" style="flex:1;font-size:12px">
+        <button class="btn btn-neutral btn-sm" onclick="addRoleMember('${escHtml(role)}')">Add</button>
+      </div>`;
+      section.innerHTML = header + memberHtml + addRow;
+      box.appendChild(section);
+    });
+  });
+}
+
+function createRole() {
+  const name = el('new-role-name').value.trim().toLowerCase();
+  if (!name) return;
+  api('/api/roles/' + encodeURIComponent(name) + '/members', 'POST', {user: '_placeholder_'})
+    .then(() => api('/api/roles/' + encodeURIComponent(name) + '/members/_placeholder_', 'DELETE'))
+    .then(() => { el('new-role-name').value = ''; loadRoles(); });
+}
+
+function deleteRole(role) {
+  if (!confirm('Delete role "' + role + '" and all its members?')) return;
+  api('/api/roles/' + encodeURIComponent(role), 'DELETE').then(loadRoles);
+}
+
+function addRoleMember(role) {
+  const inp  = el('add-member-' + role);
+  const user = inp.value.trim().toLowerCase();
+  if (!user) return;
+  api('/api/roles/' + encodeURIComponent(role) + '/members', 'POST', {user})
+    .then(() => { inp.value = ''; loadRoles(); });
+}
+
+function removeRoleMember(role, user) {
+  api('/api/roles/' + encodeURIComponent(role) + '/members/' + encodeURIComponent(user), 'DELETE')
+    .then(loadRoles);
+}
+
+// ── Counters tab ───────────────────────────────────────────────────────────
+function loadCounters() {
+  api('/api/counters').then(d => {
+    const tbody = el('counters-rows');
+    tbody.innerHTML = '';
+    const counters = d.counters || {};
+    if (!Object.keys(counters).length) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td colspan="5" style="padding:8px;color:var(--muted);font-size:13px">No counters yet.</td>`;
+      tbody.appendChild(tr);
+      return;
+    }
+    Object.entries(counters).forEach(([name, entry]) => {
+      const tr = document.createElement('tr');
+      const rolesVal = (entry.edit_roles || []).join(', ');
+      tr.innerHTML = `
+        <td style="padding:4px 6px;font-size:13px"><strong>!${escHtml(name)}</strong></td>
+        <td style="padding:2px 4px;text-align:center"><input type="number" value="${entry.value||0}" style="width:60px" onchange="patchCounter('${escHtml(name)}',{value:parseInt(this.value)||0})"></td>
+        <td style="padding:2px 4px"><input type="text" value="${escHtml(entry.display||'')}" style="width:100%" onchange="patchCounter('${escHtml(name)}',{display:this.value})"></td>
+        <td style="padding:2px 4px"><input type="text" value="${escHtml(rolesVal)}" style="width:100%" placeholder="moderator, broadcaster" onchange="patchCounter('${escHtml(name)}',{edit_roles:this.value.split(',').map(r=>r.trim()).filter(Boolean)})"></td>
+        <td style="padding:2px 4px;text-align:center"><button class="btn-icon" onclick="deleteCounter('${escHtml(name)}')">✕</button></td>
+      `;
+      tbody.appendChild(tr);
+    });
+  });
+}
+
+function addCounter() {
+  const name = el('new-counter-name').value.trim().toLowerCase();
+  if (!name) return;
+  api('/api/counters', 'POST', {name}).then(() => { el('new-counter-name').value = ''; loadCounters(); });
+}
+
+function patchCounter(name, patch) {
+  api('/api/counters/' + encodeURIComponent(name), 'PATCH', patch);
+}
+
+function deleteCounter(name) {
+  if (!confirm('Delete counter !' + name + '?')) return;
+  api('/api/counters/' + encodeURIComponent(name), 'DELETE').then(loadCounters);
+}
+
+// ── Quotes tab ─────────────────────────────────────────────────────────────
+function loadQuotes() {
+  const q = (el('quote-search') && el('quote-search').value) || '';
+  api('/api/quotes' + (q ? '?q=' + encodeURIComponent(q) : '')).then(d => {
+    const tbody = el('quotes-rows');
+    const empty = el('quotes-empty');
+    tbody.innerHTML = '';
+    const quotes = d.quotes || [];
+    if (!quotes.length) {
+      empty.style.display = '';
+      return;
+    }
+    empty.style.display = 'none';
+    quotes.forEach(q => {
+      const tr = document.createElement('tr');
+      const date = (q.timestamp || '').slice(0, 10);
+      tr.innerHTML = `
+        <td style="padding:4px 6px;font-size:12px;color:var(--muted)">#${q.id}</td>
+        <td style="padding:4px 6px;font-size:12px">${escHtml(q.text)}</td>
+        <td style="padding:4px 6px;font-size:12px;color:var(--muted)">${escHtml(q.added_by||'')}</td>
+        <td style="padding:4px 6px;font-size:11px;color:var(--muted)">${escHtml(date)}</td>
+        <td style="padding:2px 4px;text-align:center"><button class="btn-icon" onclick="deleteQuote(${q.id})">✕</button></td>
+      `;
+      tbody.appendChild(tr);
+    });
+  });
+}
+
+function deleteQuote(id) {
+  if (!confirm('Delete quote #' + id + '?')) return;
+  api('/api/quotes/' + id, 'DELETE').then(loadQuotes);
 }
 
 // ── applyStatus guard (allow null = no change) ────────────────────────────
