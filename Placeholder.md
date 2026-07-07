@@ -9,7 +9,7 @@ Use these placeholders in your custom `!command` response text. They are replace
 No API or files needed — computed instantly at call time.
 
 | Placeholder | Value | Example output |
-|---|---|---|
+| --- | --- | --- |
 | `%user%` | Twitch username of the person who typed the command | `streamer42` |
 | `%channel%` | Twitch channel name | `mychannel` |
 | `%command%` | The command word itself | `!so` |
@@ -30,7 +30,7 @@ Files live in the `data/` folder next to `twitch_bot.py`. Manage them via **Sett
 Filenames must use only letters, numbers, underscores, hyphens, and dots (`a-z A-Z 0-9 _ - .`).
 
 | Placeholder | Value |
-|---|---|
+| --- | --- |
 | `%counter:filename%` | Reads a number from the file, adds 1, saves it back, returns the new value. Creates the file at 0 if missing. |
 | `%randomline:filename%` | Picks a random non-empty line from the file. Returns `(file not found)` if the file is missing, `(empty file)` if all lines are blank. |
 | `%line:N:filename%` | Returns line N (1-indexed) from the file. Returns `(line not found)` if N is out of range. |
@@ -63,7 +63,7 @@ Response: `"%line:3:quotes.txt%"`
 Pulls live data from Twitch. Requires your Broadcaster Token and Client ID to be configured. Cached for 60 seconds. Returns `offline` if the stream is not live or credentials are missing.
 
 | Placeholder | Value |
-|---|---|
+| --- | --- |
 | `%game%` | Current game or category |
 | `%title%` | Stream title |
 | `%uptime%` | How long the stream has been live — `2h 14m` |
