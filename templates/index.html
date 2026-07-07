@@ -1124,8 +1124,6 @@ function addCmdRow(cmd, entry) {
 
 // ── Data file manager ─────────────────────────────────────────────────────
 
-let _editingFile = null;
-
 function loadDataFiles() {
   api('/api/datafiles').then(d => {
     const tb = el('datafiles-rows');
@@ -1145,7 +1143,6 @@ function loadDataFiles() {
 }
 
 function openFileEditor(name) {
-  _editingFile = name;
   const nameInput = el('datafile-name');
   const hint      = el('datafile-editor-hint');
   el('datafile-content').value = '';
@@ -1166,7 +1163,6 @@ function openFileEditor(name) {
 
 function closeFileEditor() {
   el('datafile-editor').style.display = 'none';
-  _editingFile = null;
 }
 
 function saveDataFile() {
@@ -1179,12 +1175,12 @@ function saveDataFile() {
 
 function deleteDataFile(name) {
   if (!confirm('Delete ' + name + '?')) return;
-  fetch('/api/datafiles/' + encodeURIComponent(name), { method: 'DELETE' })
+  api('/api/datafiles/' + encodeURIComponent(name), 'DELETE')
     .then(() => loadDataFiles());
 }
 
 function escHtml(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 function getChatCommands() {
