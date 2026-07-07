@@ -90,3 +90,58 @@ class TestBuildUserRoles(unittest.TestCase):
             app = _make_app(data_dir=tmpdir)
             roles = app._build_user_roles("viewer1", "")
             self.assertEqual(roles, {"everyone"})
+
+
+class TestRoleCommands(unittest.TestCase):
+    def _app_with_dir(self, tmpdir: str) -> twitch_bot.WebApp:
+        app = _make_app(data_dir=tmpdir)
+        app._config["twitch_channel"] = "testchannel"
+        return app
+
+    def test_addrole_creates_role_and_member(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app = self._app_with_dir(tmpdir)
+            roles = {"moderator", "everyone"}
+            app._route_role_commands("mod1", "!addrole viewer1 trusted", roles)
+            with open(os.path.join(tmpdir, "roles.json")) as f:
+                data = json.load(f)
+            self.assertIn("viewer1", data.get("trusted", []))
+            app._irc.say.assert_called_once()
+
+    def test_addrole_requires_moderator(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app = self._app_with_dir(tmpdir)
+            app._route_role_commands("viewer1", "!addrole viewer2 trusted", {"everyone"})
+            self.assertFalse(os.path.exists(os.path.join(tmpdir, "roles.json")))
+            app._irc.say.assert_not_called()
+
+    def test_removerole_removes_member(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "roles.json"), "w") as f:
+                json.dump({"trusted": ["viewer1"]}, f)
+            app = self._app_with_dir(tmpdir)
+            app._route_role_commands("mod1", "!removerole viewer1 trusted", {"moderator", "everyone"})
+            with open(os.path.join(tmpdir, "roles.json")) as f:
+                data = json.load(f)
+            self.assertNotIn("viewer1", data.get("trusted", []))
+
+    def test_roles_command_lists_roles(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, "roles.json"), "w") as f:
+                json.dump({"artist": ["viewer1"]}, f)
+            app = self._app_with_dir(tmpdir)
+            app._route_role_commands("mod1", "!roles viewer1", {"moderator", "everyone"})
+            app._irc.say.assert_called_once()
+            reply = app._irc.say.call_args[0][1]
+            self.assertIn("artist", reply)
+
+    def test_non_role_command_returns_false(self):
+        app = _make_app()
+        result = app._route_role_commands("viewer1", "!hello", {"everyone"})
+        self.assertFalse(result)
+
+    def test_role_command_returns_true(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app = self._app_with_dir(tmpdir)
+            result = app._route_role_commands("mod1", "!addrole viewer1 trusted", {"moderator", "everyone"})
+            self.assertTrue(result)

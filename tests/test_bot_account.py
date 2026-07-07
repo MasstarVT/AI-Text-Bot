@@ -15,10 +15,14 @@ def _make_app(config: dict) -> twitch_bot.WebApp:
     app = object.__new__(twitch_bot.WebApp)
     app._config_lock   = threading.Lock()
     app._history_lock  = threading.Lock()
+    app._roles_lock    = threading.Lock()
+    app._counters_lock = threading.Lock()
+    app._quotes_lock   = threading.Lock()
     app._chat_history  = collections.deque(maxlen=20)
     app._ai_counter    = 0
     app._ai            = None
     app._irc           = None
+    app._data_dir      = "/nonexistent"
     app._config        = dict(config)
     return app
 
@@ -94,6 +98,9 @@ class TestSelfFilter(unittest.TestCase):
     def _app_with_mocked_routes(self, config=None):
         app = _make_app(config or _BASE_CONFIG)
         app._log                 = lambda msg: None
+        app._route_role_commands = MagicMock(return_value=False)
+        app._route_counters      = MagicMock(return_value=False)
+        app._route_quotes        = MagicMock(return_value=False)
         app._route_chat_commands = MagicMock()
         app._route_plays         = MagicMock()
         app._route_ai            = MagicMock()

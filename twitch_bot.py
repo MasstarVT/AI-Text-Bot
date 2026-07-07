@@ -2328,6 +2328,90 @@ class WebApp:
             pass
         return roles
 
+    def _route_role_commands(self, username: str, message: str, user_roles: set) -> bool:
+        """Handle !addrole, !removerole, !roles commands. Returns True if consumed."""
+        parts = message.strip().split()
+        if not parts:
+            return False
+        cmd = parts[0].lower()
+        if cmd not in ("!addrole", "!removerole", "!roles"):
+            return False
+
+        with self._config_lock:
+            channel = self._config.get("twitch_channel", "").lower().strip()
+        irc = self._irc
+
+        is_mod = bool(user_roles & {"moderator", "broadcaster"})
+
+        if cmd == "!addrole":
+            if not is_mod or len(parts) < 3:
+                return True
+            target = parts[1].lower()
+            role   = parts[2].lower()
+            path   = os.path.join(self._data_dir, "roles.json")
+            with self._roles_lock:
+                os.makedirs(self._data_dir, exist_ok=True)
+                custom: dict = {}
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        custom = json.load(f)
+                members = custom.setdefault(role, [])
+                if target not in members:
+                    members.append(target)
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(custom, f, indent=2)
+            if irc and channel:
+                irc.say(channel, f"Granted '{role}' to {target}.")
+            self._log(f"[Roles] {username} → !addrole {target} {role}")
+
+        elif cmd == "!removerole":
+            if not is_mod or len(parts) < 3:
+                return True
+            target = parts[1].lower()
+            role   = parts[2].lower()
+            path   = os.path.join(self._data_dir, "roles.json")
+            with self._roles_lock:
+                custom: dict = {}
+                if os.path.exists(path):
+                    with open(path, encoding="utf-8") as f:
+                        custom = json.load(f)
+                if role in custom:
+                    custom[role] = [m for m in custom[role] if m != target]
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(custom, f, indent=2)
+            if irc and channel:
+                irc.say(channel, f"Removed '{role}' from {target}.")
+            self._log(f"[Roles] {username} → !removerole {target} {role}")
+
+        elif cmd == "!roles":
+            if len(parts) < 2:
+                return True
+            target = parts[1].lower()
+            found: set = {"everyone"}
+            path = os.path.join(self._data_dir, "roles.json")
+            with self._roles_lock:
+                if os.path.exists(path):
+                    try:
+                        with open(path, encoding="utf-8") as f:
+                            custom = json.load(f)
+                        for r, members in custom.items():
+                            if target in [m.lower() for m in members]:
+                                found.add(r)
+                    except Exception:
+                        pass
+            if irc and channel:
+                irc.say(channel, f"{target} roles: {', '.join(sorted(found))}")
+
+        return True
+
+    def _route_counters(self, username: str, message: str, user_roles: set) -> bool:
+        """Stub — implemented in Task 3. Returns False (not handled)."""
+        return False
+
+    def _route_quotes(self, username: str, message: str, user_roles: set) -> bool:
+        """Stub — implemented in Task 4. Returns False (not handled)."""
+        return False
+
     # ══════════════════════════════════════════════════════════════════════════
     # Message dispatch  (called from IRC thread)
     # ══════════════════════════════════════════════════════════════════════════
@@ -2355,7 +2439,12 @@ class WebApp:
         with self._history_lock:
             self._chat_history.append((username, message))
 
-        self._route_chat_commands(username, message)
+        user_roles = self._build_user_roles(username, badges)
+        self._route_role_commands(username, message, user_roles)
+        handled = self._route_counters(username, message, user_roles)
+        handled = handled or self._route_quotes(username, message, user_roles)
+        if not handled:
+            self._route_chat_commands(username, message)
         self._route_plays(username, message)
         self._route_ai(username, message, bits, reward_id)
         if bits > 0:
