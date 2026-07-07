@@ -713,7 +713,7 @@ class TwitchIRCClient:
     def __init__(self, get_creds, log, on_message, on_ready=None, on_reconnecting=None, on_event=None) -> None:
         self.get_creds       = get_creds       # callable → dict(channel, username, token)
         self.log             = log
-        self.on_message      = on_message      # callback(username: str, message: str)
+        self.on_message      = on_message      # callback(username, message, bits, reward_id, badges)
         self.on_ready        = on_ready        # called once when JOIN is confirmed
         self.on_reconnecting = on_reconnecting # called on unexpected disconnect (before backoff sleep)
         self.on_event: callable | None = on_event  # callback(event_type: str, username: str, extra: dict)
@@ -2152,8 +2152,6 @@ class WebApp:
 
     def _init_counter_presets(self) -> None:
         path = os.path.join(self._data_dir, "counters.json")
-        if os.path.exists(path):
-            return
         presets = {
             "deaths": {"value": 0, "display": "Deaths: {value}", "edit_roles": ["moderator", "broadcaster"]},
             "wins":   {"value": 0, "display": "Wins: {value}",   "edit_roles": ["moderator", "broadcaster"]},
@@ -2161,6 +2159,8 @@ class WebApp:
         }
         os.makedirs(self._data_dir, exist_ok=True)
         with self._counters_lock:
+            if os.path.exists(path):
+                return
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(presets, f, indent=2)
 
