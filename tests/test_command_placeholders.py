@@ -2,6 +2,8 @@
 import unittest
 import sys
 import os
+import tempfile
+import shutil
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from twitch_bot import _apply_placeholders
@@ -140,11 +142,9 @@ class TestAPIPlaceholders(unittest.TestCase):
 class TestFilePlaceholders(unittest.TestCase):
 
     def setUp(self):
-        import tempfile
         self.tmp = tempfile.mkdtemp()
 
     def tearDown(self):
-        import shutil
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _ph(self, response, **kwargs):
@@ -161,6 +161,14 @@ class TestFilePlaceholders(unittest.TestCase):
     def test_safe_path_rejects_traversal(self):
         from twitch_bot import _safe_data_path
         self.assertIsNone(_safe_data_path(self.tmp, "../secret.txt"))
+
+    def test_safe_path_rejects_dotdot_no_slash(self):
+        from twitch_bot import _safe_data_path
+        self.assertIsNone(_safe_data_path(self.tmp, "..secret.txt"))
+
+    def test_safe_path_rejects_bare_dotdot(self):
+        from twitch_bot import _safe_data_path
+        self.assertIsNone(_safe_data_path(self.tmp, ".."))
 
     def test_safe_path_rejects_slash(self):
         from twitch_bot import _safe_data_path
@@ -251,13 +259,14 @@ class TestFilePlaceholders(unittest.TestCase):
         self.assertEqual(self._ph("%line:99:quotes.txt%"), "(line not found)")
 
     def test_line_zero_invalid(self):
-        path = os.path.join(self.tmp, "quotes.txt")
-        with open(path, "w") as f:
-            f.write("Only\n")
         self.assertEqual(self._ph("%line:0:quotes.txt%"), "(invalid line)")
 
     def test_line_file_not_found(self):
         self.assertEqual(self._ph("%line:1:missing.txt%"), "(file not found)")
+
+    def test_line_traversal_left_as_is(self):
+        result = self._ph("%line:1:../etc/passwd%")
+        self.assertEqual(result, "%line:1:../etc/passwd%")
 
     # ── end-to-end integration through _apply_placeholders ───────────────────
 
