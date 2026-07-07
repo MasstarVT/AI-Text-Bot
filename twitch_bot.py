@@ -125,7 +125,7 @@ def _safe_data_path(data_dir: str, name: str) -> str | None:
         return None
     if not _DATA_NAME_RE.fullmatch(name):
         return None
-    if ".." in name:
+    if ".." in name or name == ".":
         return None
     return os.path.join(data_dir, name)
 
@@ -2093,8 +2093,8 @@ class WebApp:
             try:
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(content)
-            except Exception as exc:
-                return _flask.jsonify({"error": str(exc)}), 500
+            except Exception:
+                return _flask.jsonify({"error": "write error"}), 500
             return _flask.jsonify({"ok": True, "name": name})
 
         @app.route("/api/datafiles/<name>", methods=["DELETE"])
@@ -2106,8 +2106,8 @@ class WebApp:
                 os.remove(path)
             except FileNotFoundError:
                 return _flask.jsonify({"error": "not found"}), 404
-            except Exception as exc:
-                return _flask.jsonify({"error": str(exc)}), 500
+            except Exception:
+                return _flask.jsonify({"error": "delete error"}), 500
             return _flask.jsonify({"ok": True})
 
         # ── file browser ──────────────────────────────────────────────────────

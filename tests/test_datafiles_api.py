@@ -16,7 +16,7 @@ class TestDataFilesAPI(unittest.TestCase):
         import twitch_bot
         import threading
         import flask as _flask
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch
 
         app_obj = twitch_bot.WebApp.__new__(twitch_bot.WebApp)
         app_obj._here              = self.tmp
@@ -35,8 +35,6 @@ class TestDataFilesAPI(unittest.TestCase):
         # Minimal _log stub so routes can call self._log without crashing
         app_obj._log = lambda msg: None
 
-        with patch.object(twitch_bot.WebApp, '_register_routes', lambda self: None):
-            pass
         app_obj._register_routes()
 
         self.client = app_obj._flask.test_client()
@@ -97,11 +95,13 @@ class TestDataFilesAPI(unittest.TestCase):
 
     def test_overwrite_existing_file(self):
         self._make_file("deaths.txt", "5")
-        self.client.post(
+        resp = self.client.post(
             "/api/datafiles/deaths.txt",
             data=json.dumps({"content": "10"}),
             content_type="application/json",
         )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.get_json()["ok"])
         path = os.path.join(self.tmp, "data", "deaths.txt")
         with open(path) as f:
             self.assertEqual(f.read(), "10")
@@ -130,6 +130,22 @@ class TestDataFilesAPI(unittest.TestCase):
     def test_delete_invalid_name(self):
         resp = self.client.delete("/api/datafiles/..%2Fetc%2Fpasswd")
         self.assertIn(resp.status_code, [400, 404])
+
+    def test_read_dot_name_returns_400(self):
+        resp = self.client.get("/api/datafiles/.")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_create_dot_name_returns_400(self):
+        resp = self.client.post(
+            "/api/datafiles/.",
+            data=json.dumps({"content": "x"}),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_delete_dot_name_returns_400(self):
+        resp = self.client.delete("/api/datafiles/.")
+        self.assertEqual(resp.status_code, 400)
 
 
 if __name__ == "__main__":
