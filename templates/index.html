@@ -537,10 +537,10 @@ textarea{resize:vertical;font-family:var(--mono)}
         <div class="tbl-wrap"><table id="counters-table">
           <thead>
             <tr>
-              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Command</th>
-              <th style="text-align:center;padding:4px 6px;font-size:11px;color:var(--muted)">Value</th>
-              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Display format</th>
-              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Edit roles</th>
+              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted);min-width:80px">Command</th>
+              <th style="text-align:center;padding:4px 6px;font-size:11px;color:var(--muted);width:60px">Value</th>
+              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted);min-width:180px">Display format</th>
+              <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted);min-width:160px">Edit roles</th>
               <th style="width:32px"></th>
             </tr>
           </thead>
@@ -1467,8 +1467,8 @@ function loadCounters() {
       tr.innerHTML = `
         <td style="padding:4px 6px;font-size:13px"><strong>!${escHtml(name)}</strong></td>
         <td style="padding:2px 4px;text-align:center"><input type="number" value="${entry.value||0}" style="width:60px" onchange="patchCounter('${escHtml(name)}',{value:parseInt(this.value)||0})"></td>
-        <td style="padding:2px 4px"><input type="text" value="${escHtml(entry.display||'')}" style="width:100%" onchange="patchCounter('${escHtml(name)}',{display:this.value})"></td>
-        <td style="padding:2px 4px"><input type="text" value="${escHtml(rolesVal)}" style="width:100%" placeholder="moderator, broadcaster" onchange="patchCounter('${escHtml(name)}',{edit_roles:this.value.split(',').map(r=>r.trim()).filter(Boolean)})"></td>
+        <td style="padding:2px 4px"><input type="text" value="${escHtml(entry.display||'')}" style="width:100%;min-width:170px" onchange="patchCounter('${escHtml(name)}',{display:this.value})"></td>
+        <td style="padding:2px 4px"><input type="text" value="${escHtml(rolesVal)}" style="width:100%;min-width:150px" placeholder="moderator, broadcaster" onchange="patchCounter('${escHtml(name)}',{edit_roles:this.value.split(',').map(r=>r.trim()).filter(Boolean)})"></td>
         <td style="padding:2px 4px;text-align:center"><button class="btn-icon" onclick="deleteCounter('${escHtml(name)}')">✕</button></td>
       `;
       tbody.appendChild(tr);
