@@ -107,11 +107,13 @@ textarea{resize:vertical;font-family:var(--mono)}
 .modal{display:none;position:fixed;inset:0;z-index:100}
 .modal.open{display:flex;align-items:center;justify-content:center}
 .modal-bg{position:absolute;inset:0;background:rgba(0,0,0,.6)}
-.modal-box{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:10px;width:560px;max-height:80vh;display:flex;flex-direction:column;z-index:1;overflow:hidden}
+.modal-box{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:10px;width:min(740px,94vw);max-height:80vh;display:flex;flex-direction:column;z-index:1;overflow:hidden}
 .modal-hdr{display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);font-weight:700;font-size:14px}
 .modal-hdr .close{margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;padding:0 4px}
 .modal-hdr .close:hover{color:var(--text)}
-.modal-body{overflow-y:auto;padding:12px 16px;flex:1}
+.modal-body{overflow-y:auto;overflow-x:hidden;padding:12px 16px;flex:1}
+.tbl-wrap{overflow-x:auto;margin-bottom:8px}
+.tbl-wrap table{min-width:100%;border-collapse:collapse}
 .modal-ftr{padding:10px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
 
 /* ── settings tabs ── */
@@ -446,7 +448,7 @@ textarea{resize:vertical;font-family:var(--mono)}
         </label>
         <div class="hint">When a viewer types a !command, the bot posts the configured response without using AI.</div>
         <div class="divider"></div>
-        <table id="cmd-table" style="width:100%;border-collapse:collapse;margin-bottom:8px">
+        <div class="tbl-wrap"><table id="cmd-table">
           <thead>
             <tr>
               <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Command</th>
@@ -458,7 +460,7 @@ textarea{resize:vertical;font-family:var(--mono)}
             </tr>
           </thead>
           <tbody id="cmd-rows"></tbody>
-        </table>
+        </table></div>
         <button class="btn btn-neutral btn-sm" onclick="addCmdRow()">+ Add command</button>
         <div class="divider"></div>
         <label class="row-check">
@@ -473,7 +475,7 @@ textarea{resize:vertical;font-family:var(--mono)}
         <div class="section-lbl">Data Files</div>
         <div class="hint">Files in the <code>data/</code> folder. Reference them in !command responses with <code>%randomline:file.txt%</code>, <code>%counter:file.txt%</code>, or <code>%line:N:file.txt%</code>.</div>
         <div class="divider"></div>
-        <table id="datafiles-table" style="width:100%;border-collapse:collapse;margin-bottom:8px">
+        <div class="tbl-wrap"><table id="datafiles-table">
           <thead>
             <tr>
               <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">File</th>
@@ -482,7 +484,7 @@ textarea{resize:vertical;font-family:var(--mono)}
             </tr>
           </thead>
           <tbody id="datafiles-rows"></tbody>
-        </table>
+        </table></div>
         <button class="btn btn-neutral btn-sm" onclick="openFileEditor(null)">+ New file</button>
         <div id="datafile-editor" style="display:none;margin-top:12px">
           <div style="display:flex;gap:8px;margin-bottom:6px;align-items:center">
@@ -502,7 +504,7 @@ textarea{resize:vertical;font-family:var(--mono)}
         <div class="section-lbl">Scheduled Messages</div>
         <div class="hint">Messages posted to chat automatically on a repeating interval while connected. Checked every 30 seconds.</div>
         <div class="divider"></div>
-        <table id="sched-table" style="width:100%;border-collapse:collapse;margin-bottom:8px">
+        <div class="tbl-wrap"><table id="sched-table">
           <thead>
             <tr>
               <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Message</th>
@@ -511,7 +513,7 @@ textarea{resize:vertical;font-family:var(--mono)}
             </tr>
           </thead>
           <tbody id="sched-rows"></tbody>
-        </table>
+        </table></div>
         <button class="btn btn-neutral btn-sm" onclick="addSchedRow()">+ Add message</button>
       </div>
 
@@ -532,7 +534,7 @@ textarea{resize:vertical;font-family:var(--mono)}
         <div class="section-lbl">Counters</div>
         <div class="hint">Persistent counters for chat. Viewers type <strong>!deaths</strong> to see the value; mods type <strong>!deaths +1</strong> or <strong>!deaths -1</strong> to change it.</div>
         <div class="divider"></div>
-        <table id="counters-table" style="width:100%;border-collapse:collapse;margin-bottom:8px">
+        <div class="tbl-wrap"><table id="counters-table">
           <thead>
             <tr>
               <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted)">Command</th>
@@ -543,7 +545,7 @@ textarea{resize:vertical;font-family:var(--mono)}
             </tr>
           </thead>
           <tbody id="counters-rows"></tbody>
-        </table>
+        </table></div>
         <div style="display:flex;gap:8px;margin-top:4px">
           <input id="new-counter-name" type="text" placeholder="Counter name (e.g. hype)" style="flex:1">
           <button class="btn btn-green btn-sm" onclick="addCounter()">+ Add counter</button>
@@ -565,7 +567,7 @@ textarea{resize:vertical;font-family:var(--mono)}
           </select>
           <input id="quote-search" type="text" placeholder="Search quotes…" style="flex:1" oninput="loadQuotes()">
         </div>
-        <table id="quotes-table" style="width:100%;border-collapse:collapse;margin-bottom:8px">
+        <div class="tbl-wrap"><table id="quotes-table">
           <thead>
             <tr>
               <th style="text-align:left;padding:4px 6px;font-size:11px;color:var(--muted);width:36px">#</th>
@@ -576,7 +578,7 @@ textarea{resize:vertical;font-family:var(--mono)}
             </tr>
           </thead>
           <tbody id="quotes-rows"></tbody>
-        </table>
+        </table></div>
         <div id="quotes-empty" style="display:none;color:var(--muted);font-size:13px;padding:8px 0">No quotes yet.</div>
       </div>
 
