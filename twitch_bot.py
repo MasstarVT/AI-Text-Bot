@@ -1360,7 +1360,8 @@ class WebApp:
             "discord_status":   "off",   # off / connecting / online / error
         }
         self._config_lock = threading.Lock()
-        self._ai_counter  = 0
+        self._ai_counter      = 0
+        self._ai_counter_lock = threading.Lock()
         self._chat_history: collections.deque[tuple[str, str]] = collections.deque(maxlen=20)
         self._history_lock  = threading.Lock()
         self._last_thanks_time: float = 0.0
@@ -3028,10 +3029,11 @@ class WebApp:
                 self._log(f"[AI] Unmatched redemption — reward ID: {reward_id}")
 
         if trigger_every_n:
-            self._ai_counter += 1
-            if self._ai_counter >= max(1, every_n):
-                self._ai_counter = 0
-                triggered = True
+            with self._ai_counter_lock:
+                self._ai_counter += 1
+                if self._ai_counter >= max(1, every_n):
+                    self._ai_counter = 0
+                    triggered = True
 
         ai = self._ai
         if triggered and ai:
