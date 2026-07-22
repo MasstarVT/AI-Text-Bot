@@ -124,3 +124,40 @@ class TestRouteCounters(unittest.TestCase):
             app._route_counters("viewer1", "!deaths", _ALL)
             _, reply = app._irc.say.call_args[0]
             self.assertEqual(reply, "💀 3 deaths!")
+
+
+class TestCounterSetNegative(unittest.TestCase):
+    def test_set_negative_is_clamped_to_zero(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_counters(tmpdir, {"deaths": {"value": 5, "display": "Deaths: {value}", "edit_roles": ["moderator"]}})
+            app = _make_app(tmpdir)
+            app._route_counters("broadcaster", "!deaths set -5", {"broadcaster", "everyone"})
+            data = _read_counters(tmpdir)
+            self.assertGreaterEqual(data["deaths"]["value"], 0,
+                "Counter value must not go negative via 'set' command")
+
+    def test_set_zero_is_allowed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_counters(tmpdir, {"deaths": {"value": 5, "display": "Deaths: {value}", "edit_roles": ["moderator"]}})
+            app = _make_app(tmpdir)
+            app._route_counters("broadcaster", "!deaths set 0", {"broadcaster", "everyone"})
+            data = _read_counters(tmpdir)
+            self.assertEqual(data["deaths"]["value"], 0)
+
+
+class TestAddcounterPermissionFeedback(unittest.TestCase):
+    def test_addcounter_no_permission_returns_false(self):
+        """Non-mod !addcounter should return False so fallthrough works."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_counters(tmpdir, {})
+            app = _make_app(tmpdir)
+            result = app._route_counters("viewer", "!addcounter foo", {"everyone"})
+            self.assertFalse(result, "Unauthorized !addcounter must return False to allow fallthrough")
+
+    def test_delcounter_no_permission_returns_false(self):
+        """Non-mod !delcounter should return False so fallthrough works."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _write_counters(tmpdir, {"deaths": {"value": 0, "display": "Deaths: {value}", "edit_roles": ["moderator"]}})
+            app = _make_app(tmpdir)
+            result = app._route_counters("viewer", "!delcounter deaths", {"everyone"})
+            self.assertFalse(result, "Unauthorized !delcounter must return False to allow fallthrough")

@@ -144,3 +144,23 @@ class TestRouteQuotes(unittest.TestCase):
             app._irc.say.assert_called_once()
             _, reply = app._irc.say.call_args[0]
             self.assertIn("No quotes", reply)
+
+
+class TestFmtMalformedEntry(unittest.TestCase):
+    def test_fmt_missing_id_does_not_raise(self):
+        """_route_quotes must not crash on a quote missing the 'id' key."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "quotes.json")
+            with open(path, "w") as f:
+                json.dump([{"text": "hello world", "author": "alice", "timestamp": "2026-01-01T00:00:00"}], f)
+            app = object.__new__(twitch_bot.WebApp)
+            app._quotes_lock = threading.Lock()
+            app._data_dir = tmpdir
+            app._config_lock = threading.Lock()
+            app._config = {"twitch_channel": "ch", "quote_addquote_role": "moderator"}
+            app._log = lambda m: None
+            app._irc = MagicMock()
+            try:
+                result = app._route_quotes("viewer", "!quote", {"everyone"})
+            except KeyError as e:
+                self.fail(f"_route_quotes raised KeyError on malformed quote: {e}")

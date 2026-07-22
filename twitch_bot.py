@@ -2617,8 +2617,12 @@ class WebApp:
 
         # ── management commands ────────────────────────────────────────────────
         if word == "!addcounter":
-            if not (user_roles & {"moderator", "broadcaster"}) or len(parts) < 2:
-                return True
+            if not (user_roles & {"moderator", "broadcaster"}):
+                if irc and channel:
+                    irc.say(channel, "Only moderators can add counters.")
+                return False
+            if len(parts) < 2:
+                return False
             name = parts[1].lower()
             with self._counters_lock:
                 os.makedirs(self._data_dir, exist_ok=True)
@@ -2640,8 +2644,12 @@ class WebApp:
             return True
 
         if word == "!delcounter":
-            if not (user_roles & {"moderator", "broadcaster"}) or len(parts) < 2:
-                return True
+            if not (user_roles & {"moderator", "broadcaster"}):
+                if irc and channel:
+                    irc.say(channel, "Only moderators can delete counters.")
+                return False
+            if len(parts) < 2:
+                return False
             name = parts[1].lower()
             with self._counters_lock:
                 counters = {}
@@ -2685,7 +2693,7 @@ class WebApp:
             elif subword == "set" and len(parts) > 2:
                 if user_roles & {"moderator", "broadcaster"}:
                     try:
-                        entry["value"] = int(parts[2])
+                        entry["value"] = max(0, int(parts[2]))
                         changed = True
                     except ValueError:
                         pass
@@ -2733,7 +2741,7 @@ class WebApp:
 
         def _fmt(q: dict) -> str:
             date = q.get("timestamp", "")[:10]
-            return f'[#{q["id"]}] {q["text"]} — {q["author"]} ({date})'
+            return f'[#{q.get("id", "?")}] {q.get("text", "")} — {q.get("author", "unknown")} ({date})'
 
         if word == "!quotecount":
             with self._quotes_lock:
