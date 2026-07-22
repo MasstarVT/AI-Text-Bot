@@ -912,6 +912,8 @@ class EventSubClient:
         loop = self._loop
         if loop and not loop.is_closed():
             loop.call_soon_threadsafe(loop.stop)
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=5.0)
 
     def _run_loop(self) -> None:
         self._loop = asyncio.new_event_loop()
