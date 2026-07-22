@@ -456,7 +456,13 @@ class TTSEngine:
             item = self._q.get()
             if item is None:
                 break
-            self._synthesize(item)
+            if self._stop_event.is_set():
+                self._stop_event.clear()
+                continue
+            try:
+                self._synthesize(item)
+            except Exception as exc:
+                self.log(f"[TTS] Synthesize error: {exc}")
 
     def _synthesize(self, text: str) -> None:
         cfg        = self.get_config()

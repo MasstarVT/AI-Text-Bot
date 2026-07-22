@@ -163,3 +163,40 @@ class TestVoicesEndpoint(unittest.TestCase):
             result = twitch_bot._scan_voices_dir("/fake/missing")
 
         self.assertEqual(result, [])
+
+
+class TestWorkerSurvivesException(unittest.TestCase):
+    def test_worker_continues_after_synthesize_exception(self):
+        """_worker must log and continue — not die — if _synthesize raises."""
+        import os, sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        import twitch_bot, threading, queue
+        from unittest.mock import MagicMock
+
+        tts = object.__new__(twitch_bot.TTSEngine)
+        tts._q = queue.Queue()
+        tts.log = MagicMock()
+        tts.get_config = lambda: {}
+
+        call_count = [0]
+        def bad_synthesize(text):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise RuntimeError("simulated error")
+            # second call succeeds silently
+
+        tts._synthesize = bad_synthesize
+        # _stop_event may be needed — set it as a cleared Event
+        tts._stop_event = threading.Event()
+
+        t = threading.Thread(target=tts._worker, daemon=True)
+        t.start()
+
+        tts._q.put("first")   # will raise
+        tts._q.put("second")  # must still be processed
+        tts._q.put(None)      # sentinel to stop
+
+        t.join(timeout=3.0)
+        self.assertFalse(t.is_alive(), "_worker thread must exit cleanly after sentinel")
+        self.assertEqual(call_count[0], 2, "_worker must process both items despite exception on first")
+        tts.log.assert_called()  # must have logged the error
