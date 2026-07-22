@@ -1313,6 +1313,7 @@ class WebApp:
             ),
             "discord_prompt":          env.get("DISCORD_PROMPT", ""),
             "web_port":                int(env.get("WEB_PORT", "5000") or "5000"),
+            "web_token":               env.get("WEB_TOKEN", ""),
             # ── runtime toggles (settings.json) ────────────────────────────
             "ai_enabled":       settings.get("ai_enabled",       False),
             "plays_enabled":    settings.get("plays_enabled",    False),
@@ -1379,6 +1380,11 @@ class WebApp:
         self._roles_lock    = threading.Lock()
         self._counters_lock = threading.Lock()
         self._quotes_lock   = threading.Lock()
+
+        # Generate a persistent web API token if not already set
+        if not self._config.get("web_token"):
+            import secrets
+            self._config["web_token"] = secrets.token_hex(16)
 
         # Load last-used prompt content from file
         last = self._config["last_prompt"]
@@ -1597,6 +1603,7 @@ class WebApp:
             f"{'true' if c.get('discord_use_shared_prompt', True) else 'false'}",
             f"DISCORD_PROMPT={c.get('discord_prompt', '')}",
             f"WEB_PORT={c.get('web_port', 5000)}",
+            f"WEB_TOKEN={c.get('web_token', '')}",
         ]
         tmp = self._env_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -1682,11 +1689,21 @@ class WebApp:
     def _register_routes(self) -> None:  # noqa: C901
         app = self._flask
 
+        @app.before_request
+        def _check_api_token():
+            if _flask.request.path.startswith("/api/"):
+                expected = self._config.get("web_token", "")
+                if not expected:
+                    return  # no token yet (first startup before any connect)
+                if _flask.request.headers.get("X-Bot-Token") != expected:
+                    return _flask.jsonify({"error": "unauthorized"}), 401
+
         # ── page ──────────────────────────────────────────────────────────────
 
         @app.route("/")
         def index():
-            return _flask.render_template("index.html")
+            token = self._config.get("web_token", "")
+            return _flask.render_template("index.html", web_token=token)
 
         # ── SSE log stream ────────────────────────────────────────────────────
 

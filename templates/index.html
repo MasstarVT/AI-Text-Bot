@@ -622,8 +622,10 @@ let PROVIDER_NEEDS_KEY = {};
 let _fbTarget = null;
 
 // ── helpers ───────────────────────────────────────────────────────────────
+const WEB_TOKEN = "{{ web_token }}";
+
 function api(url, method='GET', body=null) {
-  const opts = { method, headers: {'Content-Type':'application/json'} };
+  const opts = { method, headers: {'Content-Type':'application/json', 'X-Bot-Token': WEB_TOKEN} };
   if (body) opts.body = JSON.stringify(body);
   return fetch(url, opts).then(r => r.json());
 }
