@@ -1602,6 +1602,14 @@ class WebApp:
                     s.update(json.load(f))
             except Exception:
                 pass
+        # Coerce int fields — old settings.json may store them as strings
+        _INT_FIELDS = {"every_n", "min_bits", "thanks_cooldown_secs", "ai_context_size"}
+        for key in _INT_FIELDS:
+            if key in s:
+                try:
+                    s[key] = int(s[key])
+                except (TypeError, ValueError):
+                    s[key] = self._SETTINGS_DEFAULTS.get(key, 0)
         return s
 
     def _save_settings(self) -> None:
