@@ -2359,6 +2359,12 @@ class WebApp:
         def api_browse():
             requested = _flask.request.args.get("path", self._here)
             root      = os.path.realpath(requested)
+            # Confine browsing to the project directory
+            try:
+                if os.path.commonpath([root, self._here]) != self._here:
+                    return _flask.jsonify({"error": "access denied"}), 403
+            except ValueError:
+                return _flask.jsonify({"error": "access denied"}), 403
             if not os.path.isdir(root):
                 root = self._here
             try:
