@@ -1368,6 +1368,7 @@ class WebApp:
         self._cmd_global_cooldowns: dict[str, float]             = {}
         self._cmd_user_cooldowns:   dict[tuple[str, str], float] = {}
         self._cmd_use_counts:   dict[str, int]  = {}
+        self._cmd_cooldowns_lock = threading.Lock()
         self._data_dir          = os.path.join(_here, "data")
         self._stream_cache:     dict             = {}
         self._stream_cache_ts:  float            = 0.0
@@ -2930,23 +2931,24 @@ class WebApp:
             except (ValueError, TypeError):
                 cooldown = 0
             cooldown_type = entry.get("cooldown_type", "global")
-            if cooldown > 0:
-                now = time.time()
-                if cooldown_type == "user":
-                    key  = (word, username)
-                    last = self._cmd_user_cooldowns.get(key, 0.0)
-                    if now - last < cooldown:
-                        return
-                    self._cmd_user_cooldowns[key] = now
-                else:
-                    last = self._cmd_global_cooldowns.get(word, 0.0)
-                    if now - last < cooldown:
-                        return
-                    self._cmd_global_cooldowns[word] = now
+            with self._cmd_cooldowns_lock:
+                if cooldown > 0:
+                    now = time.time()
+                    if cooldown_type == "user":
+                        key  = (word, username)
+                        last = self._cmd_user_cooldowns.get(key, 0.0)
+                        if now - last < cooldown:
+                            return
+                        self._cmd_user_cooldowns[key] = now
+                    else:
+                        last = self._cmd_global_cooldowns.get(word, 0.0)
+                        if now - last < cooldown:
+                            return
+                        self._cmd_global_cooldowns[word] = now
+                self._cmd_use_counts[word] = self._cmd_use_counts.get(word, 0) + 1
+                count = self._cmd_use_counts[word]
             response = entry.get("response", "")
             args     = message.strip()[len(word):].strip()
-            self._cmd_use_counts[word] = self._cmd_use_counts.get(word, 0) + 1
-            count       = self._cmd_use_counts[word]
             stream_info = self._fetch_stream_info()
             response    = _apply_placeholders(
                 response, username, channel, word, args,

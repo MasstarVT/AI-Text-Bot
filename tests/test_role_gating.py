@@ -24,6 +24,7 @@ def _make_app(commands: dict) -> twitch_bot.WebApp:
     app._cmd_global_cooldowns = {}
     app._cmd_user_cooldowns   = {}
     app._cmd_use_counts       = {}
+    app._cmd_cooldowns_lock   = threading.Lock()
     app._data_dir             = os.path.join(os.path.dirname(__file__), "..", "data")
     app._stream_cache         = {}
     app._stream_cache_ts      = 0.0

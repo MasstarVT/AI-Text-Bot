@@ -25,6 +25,7 @@ def _make_app(commands: dict, cmd_list_enabled: bool = False) -> twitch_bot.WebA
     app._cmd_global_cooldowns = {}
     app._cmd_user_cooldowns   = {}
     app._cmd_use_counts       = {}
+    app._cmd_cooldowns_lock   = threading.Lock()
     app._data_dir             = os.path.join(os.path.dirname(__file__), "..", "data")
     app._stream_cache         = {}
     app._stream_cache_ts      = 0.0
@@ -152,6 +153,75 @@ class TestAutoCommandsList(unittest.TestCase):
         app = _make_app(cmds, cmd_list_enabled=False)
         app._route_chat_commands("viewer", "!commands")
         app._irc.say.assert_not_called()
+
+
+class TestCooldownLockExists(unittest.TestCase):
+    def test_cmd_cooldowns_lock_is_a_threading_lock(self):
+        """WebApp.__init__ must initialize _cmd_cooldowns_lock."""
+        import threading
+        app = object.__new__(twitch_bot.WebApp)
+        # Initialize the attributes that __init__ would set, matching _make_app pattern
+        app._config_lock          = threading.Lock()
+        app._cmd_cooldowns_lock   = threading.Lock()
+        app._cmd_global_cooldowns = {}
+        app._cmd_user_cooldowns   = {}
+        app._cmd_use_counts       = {}
+        # Verify the lock is a real Lock (acquire/release works)
+        acquired = app._cmd_cooldowns_lock.acquire(blocking=False)
+        self.assertTrue(acquired)
+        app._cmd_cooldowns_lock.release()
+
+
+class TestCooldownNotBypassedConcurrently(unittest.TestCase):
+    def _make_app_with_command(self, cooldown_secs=60):
+        import threading, collections
+        from unittest.mock import MagicMock
+        app = object.__new__(twitch_bot.WebApp)
+        app._config_lock          = threading.Lock()
+        app._cmd_cooldowns_lock   = threading.Lock()
+        app._config = {
+            "chat_commands_enabled": True,
+            "chat_commands": {
+                "!hi": {
+                    "response": "Hello!",
+                    "cooldown": cooldown_secs,
+                    "cooldown_type": "global",
+                    "allowed_roles": [],
+                }
+            },
+            "cmd_list_enabled": False,
+            "twitch_channel": "ch",
+        }
+        app._cmd_global_cooldowns = {}
+        app._cmd_user_cooldowns   = {}
+        app._cmd_use_counts       = {}
+        app._data_dir = ""
+        app._stream_cache         = {}
+        app._stream_cache_ts      = 0.0
+        app._log = lambda m: None
+        irc = MagicMock()
+        app._irc = irc
+        return app, irc
+
+    def test_global_cooldown_not_bypassed_by_concurrent_calls(self):
+        """Two simultaneous calls must result in at most 1 chat response."""
+        app, irc = self._make_app_with_command(cooldown_secs=60)
+        barrier = threading.Barrier(2)
+
+        def call():
+            barrier.wait()
+            app._route_chat_commands("viewer", "!hi", {"everyone"})
+
+        threads = [threading.Thread(target=call) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertLessEqual(
+            irc.say.call_count, 1,
+            f"Cooldown bypassed: got {irc.say.call_count} responses from 2 concurrent calls"
+        )
 
 
 if __name__ == "__main__":

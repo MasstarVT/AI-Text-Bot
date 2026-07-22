@@ -30,6 +30,7 @@ class TestDataFilesAPI(unittest.TestCase):
         app_obj._cmd_use_counts    = {}
         app_obj._cmd_global_cooldowns = {}
         app_obj._cmd_user_cooldowns   = {}
+        app_obj._cmd_cooldowns_lock   = threading.Lock()
         app_obj._flask = _flask.Flask(__name__)
 
         # Minimal _log stub so routes can call self._log without crashing
