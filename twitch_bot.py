@@ -736,6 +736,7 @@ class TwitchIRCClient:
 
     def say(self, channel: str, text: str) -> None:
         """Send a chat message to the channel (called from any thread)."""
+        text = text.replace("\r", " ").replace("\n", " ")  # prevent CRLF injection
         sock = self._sock  # snapshot to avoid TOCTOU with disconnect()
         if sock:
             try:
