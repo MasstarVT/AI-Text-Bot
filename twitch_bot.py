@@ -278,11 +278,17 @@ class GameInputController:
         if HAS_PYDIRECTINPUT:
             try:
                 pydirectinput.keyDown(key)
-                time.sleep(duration)
-                pydirectinput.keyUp(key)
-                return
             except Exception:
-                pass  # fall through to pynput
+                pass  # keyDown failed — fall through to pynput
+            else:
+                try:
+                    time.sleep(duration)
+                finally:
+                    try:
+                        pydirectinput.keyUp(key)
+                    except Exception:
+                        pass
+                return
 
         if HAS_PYNPUT:
             try:
