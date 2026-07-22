@@ -41,6 +41,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.parse as _urlparse
 from collections.abc import Callable
 from datetime import datetime, timezone
 
@@ -104,6 +105,31 @@ _THANKS_TEMPLATES: dict[str, Callable[[str, dict], str]] = {
 }
 
 _PLACEHOLDER_RE = re.compile(r"%[a-zA-Z0-9_]+(?::[^%]+)?%")
+
+# ── SSRF protection ──────────────────────────────────────────────────────────
+_SSRF_BLOCKED_HOSTS = re.compile(
+    r"^169\.254\.169\.254$|^metadata\.google\.internal$|^100\.100\.100\.200$",
+    re.IGNORECASE,
+)
+
+def _validate_llm_endpoint(url: str) -> bool:
+    """Return True if url is safe to use as an LLM endpoint.
+
+    Blocks known cloud metadata endpoints. Localhost and private IPs
+    are allowed since local LLM providers (Ollama, LM Studio) use them.
+    """
+    if not url:
+        return False
+    try:
+        parsed = _urlparse.urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = parsed.hostname or ""
+        if _SSRF_BLOCKED_HOSTS.match(host):
+            return False
+        return True
+    except Exception:
+        return False
 
 
 def _calc_uptime(started_at: str) -> str:
@@ -672,6 +698,11 @@ class AIResponseHandler:
         cfg           = self.get_config()
         provider      = cfg.get("provider", "Ollama")
         endpoint      = cfg.get("endpoint")      or "http://localhost:11434/v1/chat/completions"
+
+        if not _validate_llm_endpoint(endpoint):
+            self.log(f"[AI] Blocked unsafe endpoint: {endpoint}")
+            return
+
         model         = cfg.get("model")         or "llama3"
         api_key       = cfg.get("api_key",  "")
         system_prompt = (
