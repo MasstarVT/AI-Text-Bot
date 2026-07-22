@@ -141,8 +141,10 @@ def _file_counter(path: str) -> str:
         except ValueError:
             return "(invalid counter)"
         val += 1
-        with open(path, "w", encoding="utf-8") as f:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             f.write(str(val))
+        os.replace(tmp, path)
         return str(val)
     except Exception:
         return "(error)"
@@ -1591,8 +1593,10 @@ class WebApp:
             f"DISCORD_PROMPT={c.get('discord_prompt', '')}",
             f"WEB_PORT={c.get('web_port', 5000)}",
         ]
-        with open(self._env_path, "w", encoding="utf-8") as f:
+        tmp = self._env_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
+        os.replace(tmp, self._env_path)
 
     def _load_settings(self) -> dict:
         s = dict(self._SETTINGS_DEFAULTS)
@@ -1655,8 +1659,10 @@ class WebApp:
             "ai_context_size":    c.get("ai_context_size",    5),
             "quote_addquote_role": c.get("quote_addquote_role", "moderator"),
         }
-        with open(self._settings_path, "w", encoding="utf-8") as f:
+        tmp = self._settings_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        os.replace(tmp, self._settings_path)
 
     def _autosave(self) -> None:
         try:
