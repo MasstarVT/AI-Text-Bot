@@ -28,6 +28,7 @@ def _make_app(commands: dict) -> twitch_bot.WebApp:
     app._data_dir             = os.path.join(os.path.dirname(__file__), "..", "data")
     app._stream_cache         = {}
     app._stream_cache_ts      = 0.0
+    app._stream_cache_lock    = threading.Lock()
     return app
 
 

@@ -1373,6 +1373,7 @@ class WebApp:
         self._data_dir          = os.path.join(_here, "data")
         self._stream_cache:     dict             = {}
         self._stream_cache_ts:  float            = 0.0
+        self._stream_cache_lock = threading.Lock()
         self._roles_lock    = threading.Lock()
         self._counters_lock = threading.Lock()
         self._quotes_lock   = threading.Lock()
@@ -2880,13 +2881,20 @@ class WebApp:
             self._handle_event("bits", username, {"bits": bits})
 
     def _fetch_stream_info(self) -> dict:
-        with self._config_lock:
+        with self._stream_cache_lock:
             if time.time() - self._stream_cache_ts < 60:
                 return dict(self._stream_cache)
+            # Pre-mark timestamp to prevent concurrent threads from also fetching.
+            # Other threads arriving during the HTTP call will see a "fresh" timestamp
+            # and return the (stale) cache instead of double-fetching.
+            self._stream_cache_ts = time.time()
+
+        with self._config_lock:
             channel   = self._config.get("twitch_channel", "")
             client_id = self._config.get("twitch_client_id", "")
             token     = (self._config.get("twitch_token", "")
                          or self._config.get("bot_token", ""))
+
         if not channel or not client_id or not token:
             return {}
         try:
@@ -2902,13 +2910,13 @@ class WebApp:
             resp.raise_for_status()
             data   = resp.json().get("data", [])
             result = data[0] if data else {}
+            with self._stream_cache_lock:
+                self._stream_cache    = result
+                self._stream_cache_ts = time.time()
+            return dict(result)
         except Exception as exc:
             self._log(f"[StreamInfo] Fetch failed: {exc}")
-            result = {}
-        with self._config_lock:
-            self._stream_cache    = result
-            self._stream_cache_ts = time.time()
-        return dict(result)
+        return {}
 
     def _route_chat_commands(self, username: str, message: str,
                              user_roles: "set[str] | None" = None) -> None:

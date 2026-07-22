@@ -27,6 +27,7 @@ class TestDataFilesAPI(unittest.TestCase):
         app_obj._config            = {}
         app_obj._stream_cache      = {}
         app_obj._stream_cache_ts   = 0.0
+        app_obj._stream_cache_lock = threading.Lock()
         app_obj._cmd_use_counts    = {}
         app_obj._cmd_global_cooldowns = {}
         app_obj._cmd_user_cooldowns   = {}

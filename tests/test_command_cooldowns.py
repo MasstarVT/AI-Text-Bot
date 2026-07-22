@@ -29,6 +29,7 @@ def _make_app(commands: dict, cmd_list_enabled: bool = False) -> twitch_bot.WebA
     app._data_dir             = os.path.join(os.path.dirname(__file__), "..", "data")
     app._stream_cache         = {}
     app._stream_cache_ts      = 0.0
+    app._stream_cache_lock    = threading.Lock()
     return app
 
 
@@ -198,6 +199,7 @@ class TestCooldownNotBypassedConcurrently(unittest.TestCase):
         app._data_dir = ""
         app._stream_cache         = {}
         app._stream_cache_ts      = 0.0
+        app._stream_cache_lock    = threading.Lock()
         app._log = lambda m: None
         irc = MagicMock()
         app._irc = irc
